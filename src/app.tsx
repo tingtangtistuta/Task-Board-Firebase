@@ -19,7 +19,6 @@ export default function App() {
   const [toastMsg, setToastMsg] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // --- 🌗 ระบบจัดการธีม (Light/Dark Mode) ---
   useEffect(() => {
     const savedTheme = localStorage.getItem('stp_theme');
     if (savedTheme === 'dark' || (!savedTheme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -69,7 +68,6 @@ export default function App() {
   const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false); 
   const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '' });
 
-  // 🏁 นิยามเกจวัดความเร็ว (Racing Progress)
   const steps = [
     { label: 'รอรับงาน', icon: <Clock className="w-3.5 h-3.5" />, color: 'bg-slate-400 dark:bg-slate-600 dark:shadow-[0_0_5px_#475569]', text: 'text-slate-500 dark:text-slate-400' },
     { label: 'รับเรื่องแล้ว', icon: <User className="w-3.5 h-3.5" />, color: 'bg-sky-500 dark:bg-cyan-500 dark:shadow-[0_0_10px_#06b6d4]', text: 'text-sky-600 dark:text-cyan-400' },
@@ -80,10 +78,11 @@ export default function App() {
   const allTopics = Object.values(settings?.topicMapping || {}).flat() as string[];
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
-  // --- 🔥 Firebase Sync & Business Logic ---
+  // 🛡️ [เซฟตี้ 1] ดักจับ Error ตอนอ่านงานแล้วเคลียร์จุดเขียว (Unread)
   useEffect(() => {
-    if (selectedTaskId && loggedInUser) {
-      try { updateDoc(doc(db, 'tasks', selectedTaskId), { unreadBy: arrayRemove(loggedInUser.name) }); } catch (e) {}
+    if (selectedTaskId && loggedInUser?.name) {
+      updateDoc(doc(db, 'tasks', selectedTaskId), { unreadBy: arrayRemove(loggedInUser.name) })
+        .catch((e) => console.log("แจ้งเตือน: ไม่มีสิทธิ์เคลียร์จุดเขียว (ข้ามกระบวนการนี้)"));
     }
   }, [selectedTaskId, loggedInUser]);
 
@@ -101,31 +100,44 @@ export default function App() {
     fetchMasterData();
   }, []);
 
+  // 🛡️ [เซฟตี้ 2] ดักจับ Error ตอนส่งสถานะ Online
   useEffect(() => {
-    if (!loggedInUser) return;
-    try {
-      const userRef = doc(db, 'presence', loggedInUser.name);
-      setDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() }, { merge: true });
-      const handleBeforeUnload = () => { updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }); };
-      window.addEventListener('beforeunload', handleBeforeUnload);
-      return onSnapshot(collection(db, 'presence'), (snap) => {
-        const pres: any = {}; snap.forEach(d => { pres[d.id] = d.data(); }); setUserPresence(pres);
-      });
-    } catch(e) {}
+    if (!loggedInUser?.name) return;
+    const userRef = doc(db, 'presence', loggedInUser.name);
+    
+    setDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() }, { merge: true })
+      .catch((e) => console.log("แจ้งเตือน: ไม่สามารถบันทึกสถานะ Online ได้"));
+
+    const handleBeforeUnload = () => { 
+      updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }).catch(() => {}); 
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    const unsub = onSnapshot(collection(db, 'presence'), (snap) => {
+      const pres: any = {}; snap.forEach(d => { pres[d.id] = d.data(); }); setUserPresence(pres);
+    }, (err) => console.log("แจ้งเตือน: อ่านสถานะทีมไม่ได้"));
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }).catch(()=>{});
+      unsub();
+    };
   }, [loggedInUser]);
 
+  // 🛡️ [เซฟตี้ 3] ดักจับ Error ตอนโหลดคิวงาน
   useEffect(() => {
     if (!loggedInUser) return;
     return onSnapshot(query(collection(db, 'tasks'), orderBy('lastActivity', 'desc')), (snap) => {
       setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    }, (err) => console.log("แจ้งเตือน: อ่านคิวงานไม่ได้", err));
   }, [loggedInUser]);
 
+  // 🛡️ [เซฟตี้ 4] ดักจับ Error ตอนโหลดแชท
   useEffect(() => {
     if (!selectedTaskId) return;
     return onSnapshot(query(collection(db, 'tasks', selectedTaskId, 'chats'), orderBy('timestamp', 'asc')), (snap) => {
       setChats((prev: any) => ({ ...prev, [selectedTaskId]: snap.docs.map(d => ({ id: d.id, ...d.data() })) }));
-    });
+    }, (err) => console.log("แจ้งเตือน: อ่านแชทไม่ได้", err));
   }, [selectedTaskId]);
 
   const handleLogin = async (e: any) => {
@@ -142,7 +154,9 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (loggedInUser) try { await updateDoc(doc(db, 'presence', loggedInUser.name), { isOnline: false, lastSeen: serverTimestamp() }); } catch(e){}
+    if (loggedInUser?.name) {
+      updateDoc(doc(db, 'presence', loggedInUser.name), { isOnline: false, lastSeen: serverTimestamp() }).catch(()=>{});
+    }
     localStorage.removeItem('stp_user_session'); setLoggedInUser(null);
   };
 
@@ -161,7 +175,7 @@ export default function App() {
       });
       await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 ภารกิจใหม่: ${newTask.topic}\n🔖 อ้างอิง: ${newTask.documentNo || '-'}\n📝 ข้อมูล: ${newTask.details || '-'}`, timestamp: serverTimestamp(), isSystem: true });
       showToast('✅ สตาร์ทภารกิจสำเร็จ!'); setIsModalOpen(false); setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '' });
-    } catch { showToast('❌ สร้างงานล้มเหลว'); }
+    } catch { showToast('❌ สร้างงานล้มเหลว (เช็คสิทธิ์ Firebase)'); }
     setIsLoading(false);
   };
 
@@ -177,23 +191,31 @@ export default function App() {
       }
       const txt = chatInput; setChatInput(''); setChatFile(null);
       await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: loggedInUser.name, text: txt, fileUrl, fileName, timestamp: serverTimestamp(), isSystem: false });
-      await updateDoc(doc(db, 'tasks', selectedTaskId), { lastActivity: serverTimestamp(), unreadBy: arrayUnion(...[...(selectedTask?.relatedPersons || []), selectedTask?.requester].filter(p => p && p !== loggedInUser.name)) });
-    } catch(err) { showToast('❌ ส่งข้อมูลล้มเหลว'); }
+      
+      const unreadList = [...(selectedTask?.relatedPersons || []), selectedTask?.requester].filter(p => p && p !== loggedInUser.name);
+      updateDoc(doc(db, 'tasks', selectedTaskId), { lastActivity: serverTimestamp(), unreadBy: arrayUnion(...unreadList) }).catch(()=>{});
+    } catch(err) { showToast('❌ ส่งข้อมูลล้มเหลว (เช็คสิทธิ์ Firebase)'); }
     setIsUploading(false);
   };
 
   const advanceMyStep = async () => {
-    if (!selectedTask || !selectedTaskId) return;
+    if (!selectedTask || !selectedTaskId || !loggedInUser?.name) return;
     const myCurrent = selectedTask.individualStatus?.[loggedInUser.name] || 0; if (myCurrent >= 3) return;
-    const myNext = myCurrent + 1; const newInd = { ...(selectedTask.individualStatus || {}), [loggedInUser.name]: myNext };
+    const myNext = myCurrent + 1; 
+    const newInd = { ...(selectedTask.individualStatus || {}), [loggedInUser.name]: myNext };
     const allSteps = (selectedTask.relatedPersons || []).map((p: string) => newInd[p] || 0);
     const globalMin = allSteps.length > 0 ? Math.min(...allSteps) : 0;
-    const updates: any = { individualStatus: newInd, lastActivity: serverTimestamp(), unreadBy: arrayUnion(...[...(selectedTask.relatedPersons || []), selectedTask.requester].filter(p => p && p !== loggedInUser.name)) };
+    
+    const updates: any = { individualStatus: newInd, lastActivity: serverTimestamp() };
     if (globalMin > (selectedTask.currentStep || 0)) { updates.currentStep = globalMin; updates.hasIssue = false; }
+    
+    const unreadList = [...(selectedTask.relatedPersons || []), selectedTask.requester].filter(p => p && p !== loggedInUser.name);
+    updates.unreadBy = arrayUnion(...unreadList);
+
     try {
       await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
       await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `🚀 ${loggedInUser.name} สับเกียร์เพิ่มเป็น: ${steps[myNext]?.label || 'ดำเนินการต่อ'}`, timestamp: serverTimestamp(), isSystem: true });
-    } catch(e) {}
+    } catch(e) { showToast('❌ อัปเดตสถานะไม่ได้ (เช็คสิทธิ์ Firebase)'); }
   };
 
   const reportIssue = async () => {
@@ -201,18 +223,35 @@ export default function App() {
     try {
       await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: true, lastActivity: serverTimestamp() });
       await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `🚨 ${loggedInUser.name} แจ้งเหตุฉุกเฉิน (Pit Stop)!`, timestamp: serverTimestamp(), isSystem: true });
-    } catch(e) {}
+    } catch(e) { showToast('❌ แจ้งปัญหาไม่ได้ (เช็คสิทธิ์ Firebase)'); }
   };
 
-  const deleteTask = async (tId: string, e: any) => {
-    e.stopPropagation(); if (loggedInUser.role !== 'Admin') return showToast('❌ สิทธิ์เข้าถึงถูกปฏิเสธ');
-    setConfirmModal({ isOpen: true, title: 'ลบข้อมูลถาวร', text: '🚨 ลบข้อมูลภารกิจนี้ทิ้งถาวรจากฐานข้อมูล ยืนยันหรือไม่?', type: 'danger', onConfirm: async () => {
-      try { await deleteDoc(doc(db, 'tasks', tId)); if (selectedTaskId === tId) setSelectedTaskId(null); } catch(e) {}
+  const addPersonToTask = async (pName: string) => {
+    if (!selectedTask || !selectedTaskId) return;
+    const newRelated = [...(selectedTask.relatedPersons || []), pName];
+    try {
+      await updateDoc(doc(db, 'tasks', selectedTaskId), { relatedPersons: newRelated, individualStatus: { ...(selectedTask.individualStatus || {}), [pName]: 0 }, currentStep: 0, lastActivity: serverTimestamp(), unreadBy: arrayUnion(...newRelated) });
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `➕ ${loggedInUser.name} ดึง "${pName}" เข้าสนาม (สถานะเกจ: รีเซ็ตเริ่มต้น)`, timestamp: serverTimestamp(), isSystem: true });
+    } catch(e) { showToast('❌ ดึงทีมงานเพิ่มไม่ได้'); }
+  };
+
+  const archiveTask = async () => {
+    if (!selectedTask || !selectedTaskId) return;
+    setConfirmModal({ isOpen: true, title: 'เข้าเส้นชัย (ปิดจ๊อบ)', text: 'ยืนยันปิดงานนี้และส่งเข้าคลังประวัติ?', type: 'info', onConfirm: async () => {
+      try { await updateDoc(doc(db, 'tasks', selectedTaskId), { isArchived: true, lastActivity: serverTimestamp() }); setSelectedTaskId(null); } catch(e) { showToast('❌ ปิดงานล้มเหลว'); }
     }});
   };
 
+  const deleteTask = async (tId: string, e: any) => {
+    e.stopPropagation(); if (loggedInUser?.role !== 'Admin') return showToast('❌ สิทธิ์เข้าถึงถูกปฏิเสธ');
+    setConfirmModal({ isOpen: true, title: 'ลบข้อมูลถาวร', text: '🚨 ลบข้อมูลภารกิจนี้ทิ้งถาวรจากฐานข้อมูล ยืนยันหรือไม่?', type: 'danger', onConfirm: async () => {
+      try { await deleteDoc(doc(db, 'tasks', tId)); if (selectedTaskId === tId) setSelectedTaskId(null); } catch(e) { showToast('❌ ลบงานล้มเหลว'); }
+    }});
+  };
+
+  // 🛡️ [เซฟตี้ 5] ดักจับ Index ทะลุของเกจวัดพลัง
   const renderGauge = (currentStep: number, hasIssue: boolean) => {
-    const safeStep = currentStep || 0;
+    const safeStep = (currentStep >= 0 && currentStep <= 3) ? currentStep : 0;
     return (
       <div className="flex gap-1.5 mt-3 mb-2">
         {[0, 1, 2, 3].map(i => {
@@ -228,7 +267,13 @@ export default function App() {
     if (t.isArchived) return false;
     const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'Admin';
     if (!isRelated) return false; 
-    if (searchQuery && !(t.topic?.toLowerCase().includes(searchQuery.toLowerCase()) || (t.documentNo && t.documentNo.toLowerCase().includes(searchQuery.toLowerCase())))) return false;
+    
+    // 🛡️ [เซฟตี้ 6] ดักจับกรณีชื่องานว่างเปล่า แล้วพิมพ์ค้นหา
+    const safeTopic = (t.topic || '').toString().toLowerCase();
+    const safeDocNo = (t.documentNo || '').toString().toLowerCase();
+    const q = searchQuery.toLowerCase();
+    if (searchQuery && !(safeTopic.includes(q) || safeDocNo.includes(q))) return false;
+    
     if (filterRequester !== 'All' && t.requester !== filterRequester) return false;
     if (filterPerson !== 'All' && !(t.relatedPersons || []).includes(filterPerson)) return false;
     if (filterStatus !== 'All' && (t.currentStep || 0).toString() !== filterStatus) return false;
@@ -249,10 +294,13 @@ export default function App() {
     </div>
   );
 
+  // 🛡️ [เซฟตี้ 7] ดึงข้อมูลสเต็ปปัจจุบันอย่างปลอดภัย สำหรับห้องแชท
+  const safeGlobalStepIdx = (selectedTask?.currentStep >= 0 && selectedTask?.currentStep <= 3) ? selectedTask.currentStep : 0;
+  const globalStepData = steps[safeGlobalStepIdx] || steps[0];
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col font-sans h-screen overflow-hidden text-slate-800 dark:text-slate-200 transition-colors duration-300">
       
-      {/* 🏎️ HEADER (แก้ไขเป็น STP Ltd. LIVE ตามคำสั่ง) */}
       <header className="bg-slate-900 dark:bg-black text-white p-4 shadow-xl flex justify-between items-center z-30 border-b border-white/10 dark:border-blue-500/30 transition-colors">
         <div className="flex items-center gap-3">
             <div className="bg-blue-600 p-2 rounded-xl dark:shadow-[0_0_15px_rgba(37,99,235,0.8)]"><Zap className="w-5 h-5 text-white"/></div>
@@ -263,8 +311,8 @@ export default function App() {
         </div>
         <div className="flex items-center gap-4">
           <div className="text-right hidden sm:block">
-            <div className="text-[10px] font-black uppercase text-blue-400 tracking-widest">{loggedInUser.role}</div>
-            <div className="text-sm font-bold text-white">{loggedInUser.name}</div>
+            <div className="text-[10px] font-black uppercase text-blue-400 tracking-widest">{loggedInUser?.role || 'User'}</div>
+            <div className="text-sm font-bold text-white">{loggedInUser?.name || ''}</div>
           </div>
           <button onClick={toggleTheme} className="bg-white/10 dark:bg-slate-900 border border-transparent dark:border-slate-800 p-2.5 rounded-xl transition-all text-amber-300 dark:text-blue-400">
             {isDarkMode ? <Sun className="w-5 h-5"/> : <Moon className="w-5 h-5"/>}
@@ -274,11 +322,10 @@ export default function App() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* คิวงานฝั่งซ้าย */}
         <div className={`w-full md:w-1/3 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-colors ${selectedTaskId ? 'hidden md:flex' : 'flex'}`}>
           <div className="bg-slate-800 dark:bg-black text-white p-2.5 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700 dark:border-slate-800 no-scrollbar transition-colors">
             <div className="text-[9px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest pl-2 shrink-0">DRIVER STATUS:</div>
-            {settings.users.map((u: string) => {
+            {(settings?.users || []).map((u: string) => {
               const isOnline = userPresence[u]?.isOnline;
               return (
                 <div key={u} className={`flex items-center gap-1.5 shrink-0 px-3 py-1 rounded-full border transition-all ${isOnline ? 'bg-green-500/10 dark:bg-lime-500/10 border-green-500/50 dark:border-lime-500/30' : 'bg-transparent dark:bg-slate-900 border-slate-500 dark:border-slate-800 opacity-60'}`}>
@@ -309,9 +356,10 @@ export default function App() {
 
           <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-100/50 dark:bg-slate-950 transition-colors">
             {processedTasks.map(task => {
-               const isMyOrder = task.requester === loggedInUser.name;
-               const isUnread = (task.unreadBy || []).includes(loggedInUser.name);
-               const stepIdx = task.currentStep || 0;
+               const isMyOrder = task.requester === loggedInUser?.name;
+               const isUnread = (task.unreadBy || []).includes(loggedInUser?.name);
+               const stepIdx = (task.currentStep >= 0 && task.currentStep <= 3) ? task.currentStep : 0;
+               const stepData = steps[stepIdx] || steps[0];
 
                let cardStyle = "bg-white border-transparent hover:border-slate-300 dark:bg-slate-900 dark:border-slate-800 dark:hover:border-slate-600 dark:hover:bg-slate-800 shadow-sm dark:shadow-none"; 
                if (selectedTaskId === task.id) cardStyle = "bg-blue-600 border-blue-700 dark:bg-slate-800 dark:border-blue-500 shadow-xl dark:shadow-[0_0_20px_rgba(59,130,246,0.3)] -translate-y-1";
@@ -323,11 +371,15 @@ export default function App() {
                   {renderGauge(stepIdx, task.hasIssue)}
                   <div className="flex justify-between items-start mb-2 mt-2">
                     <h3 className={`text-sm leading-tight pr-6 line-clamp-2 ${selectedTaskId === task.id ? 'text-white font-black' : (isUnread ? 'text-slate-900 dark:text-white font-black' : 'text-slate-800 dark:text-slate-300 font-bold')}`}>{task.topic}</h3>
-                    {loggedInUser.role === 'Admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
+                    {loggedInUser?.role === 'Admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
+                  </div>
+                  <div className={`flex items-center gap-3 mt-3 text-[10px] ${selectedTaskId === task.id ? 'text-blue-100 dark:text-blue-200' : 'text-slate-500'}`}>
+                    <div className="flex items-center gap-1"><User className="w-3 h-3"/> สั่งโดย: <span className={`font-bold underline ${selectedTaskId === task.id ? 'text-white' : 'text-slate-600 dark:text-slate-300'}`}>{task.requester}</span></div>
+                    <div className="flex items-center gap-1"><Users className="w-3 h-3"/> {(task.relatedPersons || []).length} คน</div>
                   </div>
                   <div className={`flex justify-between items-center mt-3 pt-3 border-t ${selectedTaskId === task.id ? 'border-white/20' : 'border-slate-200 dark:border-slate-700/50'}`}>
-                    <div className={`text-[10px] font-black uppercase tracking-tight flex items-center gap-1 ${task.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : (selectedTaskId === task.id ? 'text-white' : steps[stepIdx].text)}`}>
-                        {task.hasIssue ? <AlertTriangle className="w-3.5 h-3.5"/> : steps[stepIdx].icon} {task.hasIssue ? 'CRITICAL ISSUE!' : steps[stepIdx].label}
+                    <div className={`text-[10px] font-black uppercase tracking-tight flex items-center gap-1 ${task.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : (selectedTaskId === task.id ? 'text-white' : stepData.text)}`}>
+                        {task.hasIssue ? <AlertTriangle className="w-3.5 h-3.5"/> : stepData.icon} {task.hasIssue ? 'CRITICAL ISSUE!' : stepData.label}
                     </div>
                     <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border tracking-wider ${selectedTaskId === task.id ? 'bg-white/20 border-transparent text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-transparent dark:border-slate-700'}`}>🏁 {task.dueDate}</span>
                   </div>
@@ -337,7 +389,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* ห้องแชทฝั่งขวา */}
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-xl z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md transition-colors">
@@ -353,13 +404,18 @@ export default function App() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-2 shrink-0">
-                  {selectedTask.requester === loggedInUser.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black shadow-lg dark:shadow-[0_0_15px_rgba(132,204,22,0.4)] hover:bg-black dark:hover:bg-lime-500 transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
-                  <button onClick={reportIssue} disabled={selectedTask.hasIssue || selectedTask.currentStep >= 3} className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 dark:border-rose-500/50 text-red-500 dark:text-rose-500 bg-red-50 dark:bg-rose-500/10 hover:bg-red-100 dark:hover:bg-rose-500/20 disabled:opacity-30 uppercase italic flex items-center justify-center gap-1.5 transition-all"><AlertTriangle className="w-3.5 h-3.5"/> PIT STOP</button>
+                  {selectedTask.requester === loggedInUser?.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black shadow-lg dark:shadow-[0_0_15px_rgba(132,204,22,0.4)] hover:bg-black dark:hover:bg-lime-500 transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
+                  <button onClick={reportIssue} disabled={selectedTask.hasIssue || (selectedTask.currentStep || 0) >= 3} className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 dark:border-rose-500/50 text-red-500 dark:text-rose-500 bg-red-50 dark:bg-rose-500/10 hover:bg-red-100 dark:hover:bg-rose-500/20 disabled:opacity-30 uppercase italic flex items-center justify-center gap-1.5 transition-all"><AlertTriangle className="w-3.5 h-3.5"/> PIT STOP</button>
                 </div>
               </div>
               <div className="space-y-4 pt-2">
                 <div>
-                   <div className="flex justify-between items-end mb-1"><span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Global Progress</span><span className={`text-xs font-black italic uppercase ${selectedTask.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : steps[selectedTask.currentStep||0].text}`}>{selectedTask.hasIssue ? 'MALFUNCTION' : steps[selectedTask.currentStep||0].label}</span></div>
+                   <div className="flex justify-between items-end mb-1">
+                     <span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Global Progress</span>
+                     <span className={`text-xs font-black italic uppercase ${selectedTask.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : globalStepData.text}`}>
+                       {selectedTask.hasIssue ? 'MALFUNCTION' : globalStepData.label}
+                     </span>
+                   </div>
                    {renderGauge(selectedTask.currentStep||0, selectedTask.hasIssue)}
                 </div>
                 <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 transition-colors">
@@ -369,15 +425,16 @@ export default function App() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {(selectedTask.relatedPersons || []).map((p: string) => {
-                      const pStep = selectedTask.individualStatus?.[p] || 0;
-                      const isMe = p === loggedInUser.name;
+                      const pStepIdx = (selectedTask.individualStatus?.[p] >= 0 && selectedTask.individualStatus?.[p] <= 3) ? selectedTask.individualStatus[p] : 0;
+                      const pStepData = steps[pStepIdx] || steps[0];
+                      const isMe = p === loggedInUser?.name;
                       return (
                         <div key={p} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-black transition-all ${isMe ? 'bg-white dark:bg-slate-800 border-blue-400 dark:border-blue-500 text-slate-800 dark:text-white shadow-md' : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'}`}>
                           <span>{p}</span>
-                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase ${steps[pStep]?.color || 'bg-slate-400 dark:bg-slate-700'} text-white`}>
-                            {steps[pStep]?.icon || <Info className="w-3 h-3"/>} {steps[pStep]?.label}
+                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase ${pStepData.color} text-white`}>
+                            {pStepData.icon} {pStepData.label}
                           </div>
-                          {isMe && pStep < 3 && <button onClick={advanceMyStep} className="bg-blue-600 text-white px-2 py-1 rounded shadow-sm hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase text-[9px] italic ml-1">BOOST ⚡</button>}
+                          {isMe && pStepIdx < 3 && <button onClick={advanceMyStep} className="bg-blue-600 text-white px-2 py-1 rounded shadow-sm hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase text-[9px] italic ml-1">BOOST ⚡</button>}
                         </div>
                       );
                     })}
@@ -388,7 +445,7 @@ export default function App() {
 
             <div className="flex-1 overflow-y-auto p-4 space-y-5 bg-transparent z-10 transition-colors">
               {(chats[selectedTaskId!] || []).map((c: any) => {
-                const isMe = c.sender === loggedInUser.name;
+                const isMe = c.sender === loggedInUser?.name;
                 return (
                   <div key={c.id} className={`flex flex-col ${c.isSystem ? 'items-center' : (isMe ? 'items-end' : 'items-start')}`}>
                     {c.isSystem ? (
@@ -424,7 +481,6 @@ export default function App() {
         )}
       </div>
 
-      {/* --- MODALS --- */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <form onSubmit={handleCreateTask} className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-md p-8 space-y-5 shadow-2xl dark:shadow-[0_0_50px_rgba(0,0,0,0.8)] border-b-8 border-blue-600 dark:border-b-0 dark:border dark:border-slate-700 animate-in zoom-in-95 duration-200 transition-colors">
