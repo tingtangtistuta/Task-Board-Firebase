@@ -5,7 +5,7 @@ import { db, storage } from './firebase';
 import { 
   Search, CheckCircle2, Clock, 
   Paperclip, Send, AlertTriangle, ArrowLeft,
-  MessageSquare, LayoutList, User, Plus, Loader2, LogOut, X, Package, Archive, CalendarDays, Trash2, Users, Info, UserPlus
+  MessageSquare, LayoutList, User, Plus, Loader2, LogOut, X, Package, Archive, CalendarDays, Trash2, Users, Info, UserPlus, FileText
 } from 'lucide-react';
 
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbym2Jl1qlXHqaNJq7S0TbhhsXegSDAPwIzf7h8_q08rOkkyY60G4UWy_NeHVsFIenCO/exec';
@@ -21,7 +21,8 @@ export default function App() {
     isOpen: false, title: '', text: '', type: 'info', onConfirm: () => {}
   });
   
-  const [settings, setSettings] = useState({ users: [] });
+  // 🟢 1. ดึง topicMapping มาจาก Sheets ด้วย
+  const [settings, setSettings] = useState({ users: [], topicMapping: {} });
   const [tasks, setTasks] = useState<any[]>([]);
   const [chats, setChats] = useState<any>({});
   const [userPresence, setUserPresence] = useState<any>({});
@@ -34,20 +35,20 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false); // 🟢 เพิ่มคนกลางคัน
+  const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false); 
   const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '' });
 
   const steps = ['รอรับงาน', 'รับเรื่องแล้ว', 'กำลังดำเนินการ', 'เสร็จสิ้น'];
 
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
-  // 🟢 1. ระบบจัดการการอ่าน (Mark as Read)
+  // แปลงหัวข้อทั้งหมดจาก Sheets มาเป็น List ให้เลือก
+  const allTopics = Object.values(settings.topicMapping || {}).flat() as string[];
+
   useEffect(() => {
     if (selectedTaskId && loggedInUser) {
       const taskRef = doc(db, 'tasks', selectedTaskId);
-      updateDoc(taskRef, {
-        unreadBy: arrayRemove(loggedInUser.name)
-      });
+      updateDoc(taskRef, { unreadBy: arrayRemove(loggedInUser.name) });
     }
   }, [selectedTaskId, loggedInUser]);
 
@@ -57,7 +58,7 @@ export default function App() {
         const res = await fetch(WEB_APP_URL);
         const text = await res.text();
         const data = JSON.parse(text);
-        if (data.settings) setSettings({ users: data.settings.users || [] });
+        if (data.settings) setSettings({ users: data.settings.users || [], topicMapping: data.settings.topicMapping || {} });
       } catch (error) { console.error("Sheets Error:", error); }
     };
     const savedUser = localStorage.getItem('stp_user_session');
@@ -129,8 +130,6 @@ export default function App() {
     try {
       const initialIndividualStatus: any = {};
       newTask.relatedPersons.forEach(person => { initialIndividualStatus[person] = 0; });
-      
-      // ทุกคนยกเว้นคนสร้าง จะเห็นเป็น Unread
       const unreadList = [...newTask.relatedPersons].filter(p => p !== loggedInUser.name);
 
       const docRef = await addDoc(collection(db, 'tasks'), {
@@ -148,7 +147,15 @@ export default function App() {
         createdAt: serverTimestamp(),
         lastActivity: serverTimestamp() 
       });
-      await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 สร้างงานใหม่โดย ${loggedInUser.name}`, timestamp: serverTimestamp(), isSystem: true });
+      
+      // 🟢 2. ปรับข้อความระบบแรกสุด ให้โชว์รายละเอียดที่สั่งงานไปเลย
+      await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { 
+        sender: 'System', 
+        text: `🆕 งานใหม่: ${newTask.topic}\n🔖 เลขอ้างอิง: ${newTask.documentNo || '-'}\n📝 รายละเอียด: ${newTask.details || '-'}`, 
+        timestamp: serverTimestamp(), 
+        isSystem: true 
+      });
+      
       showToast('✅ สร้างงานสำเร็จ!');
       setIsModalOpen(false);
       setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '' });
@@ -171,7 +178,6 @@ export default function App() {
     const txt = chatInput;
     setChatInput(''); setChatFile(null);
     
-    // 🟢 แจ้งเตือนทุกคนในกลุ่ม
     const notifyList = [...selectedTask.relatedPersons, selectedTask.requester].filter(p => p !== loggedInUser.name);
 
     await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: loggedInUser.name, text: txt, fileUrl, fileName, timestamp: serverTimestamp(), isSystem: false });
@@ -209,15 +215,12 @@ export default function App() {
     await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `👤 ${loggedInUser.name} เปลี่ยนสถานะส่วนตัวเป็น: ${steps[myNextStep]}`, timestamp: serverTimestamp(), isSystem: true });
   };
 
-  // 🟢 2. ลอจิกการเพิ่มผู้เกี่ยวข้องกลางคัน
   const addPersonToTask = async (personName: string) => {
     if (!selectedTask || !selectedTaskId) return;
     if (selectedTask.relatedPersons.includes(personName)) return showToast('พนักงานคนนี้อยู่ในกลุ่มแล้ว');
 
     const newRelatedPersons = [...selectedTask.relatedPersons, personName];
     const newIndividualStatus = { ...selectedTask.individualStatus, [personName]: 0 };
-    
-    // เมื่อคนใหม่เข้ามาที่ Step 0 สถานะหลักจะถูกดึงกลับไปที่ 0 ทันที
     const updates = {
       relatedPersons: newRelatedPersons,
       individualStatus: newIndividualStatus,
@@ -229,7 +232,7 @@ export default function App() {
     await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
     await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { 
       sender: 'System', 
-      text: `➕ ${loggedInUser.name} ดึง "${personName}" เข้ามาร่วมงาน (สถานะภาพรวมปรับเป็น: รอรับงาน)`, 
+      text: `➕ ${loggedInUser.name} ดึง "${personName}" เข้ามาร่วมงาน (สถานะปรับเป็น: รอรับงาน)`, 
       timestamp: serverTimestamp(), 
       isSystem: true 
     });
@@ -287,7 +290,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel: Task Queue */}
         <div className={`w-full md:w-1/3 bg-white border-r flex flex-col ${selectedTaskId ? 'hidden md:flex' : 'flex'}`}>
-          <div className="bg-slate-800 text-white p-2 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700">
+          <div className="bg-slate-800 text-white p-2 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700 custom-scrollbar">
             <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1 shrink-0">ทีมงาน:</div>
             {settings.users.map((u: string) => {
               const isOnline = userPresence[u]?.isOnline;
@@ -307,14 +310,13 @@ export default function App() {
             </div>
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
-              <input type="text" placeholder="ค้นหา..." className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              <input type="text" placeholder="ค้นหาชื่องาน, เลขที่เอกสาร..." className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-lg text-sm outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
             {visibleTasks.map(task => {
                const isRelated = task.relatedPersons?.includes(loggedInUser.name) || task.requester === loggedInUser.name || loggedInUser.role === 'Admin';
                if (!isRelated) return null; 
-               // 🟢 ระบบจุดเขียว (Unread)
                const isUnread = task.unreadBy?.includes(loggedInUser.name);
 
                return (
@@ -339,14 +341,25 @@ export default function App() {
           <div className="flex-1 flex flex-col bg-slate-50">
             <div className="bg-white border-b p-4 shadow-sm z-10">
               <div className="flex justify-between items-start mb-4">
-                <div>
+                <div className="flex-1 pr-4">
                   <button onClick={() => setSelectedTaskId(null)} className="md:hidden text-blue-600 text-xs font-bold mb-2 flex items-center gap-1"><ArrowLeft className="w-3 h-3"/> กลับ</button>
-                  <h2 className="font-black text-lg text-slate-800">{selectedTask.topic}</h2>
+                  <h2 className="font-black text-lg text-slate-800 leading-tight mb-2">{selectedTask.topic}</h2>
+                  
+                  {/* 🟢 3. เพิ่มการแสดงผลรายละเอียดและเลขอ้างอิงที่หัวแชท */}
+                  {selectedTask.documentNo && <div className="text-sm font-bold text-blue-600 mb-2 flex items-center gap-1"><FileText className="w-4 h-4"/> เลขอ้างอิง: {selectedTask.documentNo}</div>}
+                  {selectedTask.details && <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 mb-3 whitespace-pre-wrap">{selectedTask.details}</div>}
+                  
+                  <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-4 gap-y-2 mt-2">
+                    <span className="flex items-center gap-1"><User className="w-3.5 h-3.5"/> สั่งโดย: <span className="font-bold text-slate-700">{selectedTask.requester}</span></span>
+                    <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5"/> กำหนด: <span className="font-bold text-indigo-600">{selectedTask.dueDate}</span></span>
+                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5"/> สร้าง: {selectedTask.createdAt?.toDate ? selectedTask.createdAt.toDate().toLocaleString('th-TH', {dateStyle: 'short', timeStyle: 'short'}) : 'กำลังบันทึก...'}</span>
+                  </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 shrink-0">
                    {selectedTask.requester === loggedInUser.name && (
-                     <button onClick={archiveTask} className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-black"><Archive className="w-3 h-3"/> ปิดถาวร</button>
+                     <button onClick={archiveTask} className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 hover:bg-black"><Archive className="w-3 h-3"/> ปิดถาวร</button>
                    )}
+                   <button onClick={reportIssue} disabled={selectedTask.hasIssue || selectedTask.currentStep >= 3} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-50">แจ้งปัญหา</button>
                 </div>
               </div>
 
@@ -360,7 +373,6 @@ export default function App() {
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
                 <div className="flex justify-between items-center mb-2">
                   <div className="text-[10px] font-bold text-slate-500">สถานะผู้เกี่ยวข้อง:</div>
-                  {/* 🟢 ปุ่มเพิ่มคนกลางคัน */}
                   <button onClick={() => setIsAddPersonModalOpen(true)} className="p-1 bg-indigo-100 text-indigo-600 rounded hover:bg-indigo-200 transition-colors"><UserPlus className="w-3.5 h-3.5"/></button>
                 </div>
                 <div className="flex flex-wrap gap-2">
@@ -385,10 +397,10 @@ export default function App() {
                 return (
                   <div key={c.id} className={`flex flex-col ${c.isSystem ? 'items-center' : (isMe ? 'items-end' : 'items-start')}`}>
                     {c.isSystem ? (
-                      <span className="text-[9px] bg-slate-200/80 px-3 py-1.5 rounded-full text-slate-600 font-bold border border-slate-300 my-1">{c.text}</span>
+                      <span className="text-[10px] bg-white px-4 py-2 rounded-xl text-slate-600 font-bold border border-slate-200 my-1 whitespace-pre-wrap text-center shadow-sm max-w-[85%]">{c.text}</span>
                     ) : (
                       <>
-                        <span className="text-[8px] text-slate-400 mb-0.5 px-1">{c.sender}</span>
+                        <span className="text-[8px] text-slate-400 mb-0.5 px-1">{c.sender} • {c.timestamp?.toDate ? c.timestamp.toDate().toLocaleString('th-TH', {timeStyle: 'short'}) : ''}</span>
                         <div className={`p-3 rounded-2xl text-sm max-w-[85%] shadow-sm ${isMe ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white border border-slate-200 rounded-tl-none text-slate-800'}`}>
                           {c.fileUrl && <a href={c.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 mb-2 bg-black/10 p-2 rounded-lg text-[10px] font-bold"><Package className="w-4 h-4"/> {c.fileName}</a>}
                           {c.text && <span className="whitespace-pre-wrap leading-relaxed">{c.text}</span>}
@@ -414,7 +426,6 @@ export default function App() {
         )}
       </div>
 
-      {/* 🟢 Modal เพิ่มคนกลางคัน */}
       {isAddPersonModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in">
           <div className="bg-white rounded-3xl w-full max-w-xs p-6 shadow-2xl">
@@ -431,6 +442,7 @@ export default function App() {
         </div>
       )}
 
+      {/* 🟢 1. อัปเกรดช่อง Topic เป็น Datalist ให้พิมพ์ค้นหาได้ และกดเลือกได้ */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
           <form onSubmit={handleCreateTask} className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
@@ -438,23 +450,44 @@ export default function App() {
               <h2 className="font-black text-xl text-slate-800">สร้างกลุ่มงานใหม่</h2>
               <X className="cursor-pointer text-slate-400" onClick={() => setIsModalOpen(false)}/>
             </div>
-            <input type="text" placeholder="หัวข้อเรื่อง / งาน (Topic)" className="w-full p-3 border rounded-xl font-bold text-blue-800 outline-none" value={newTask.topic} onChange={e => setNewTask({...newTask, topic: e.target.value})} autoFocus/>
-            <div className="grid grid-cols-2 gap-3">
-              <input type="date" className="w-full p-2.5 border rounded-xl bg-indigo-50 text-sm font-bold text-indigo-800 outline-none" value={newTask.dueDate} onChange={e => setNewTask({...newTask, dueDate: e.target.value})}/>
-              <input type="text" placeholder="เลขอ้างอิง (ถ้ามี)" className="w-full p-2.5 border rounded-xl text-sm outline-none" value={newTask.documentNo} onChange={e => setNewTask({...newTask, documentNo: e.target.value})}/>
+            
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">หัวข้อเรื่อง / งาน (Topic)</label>
+              <input type="text" list="topic-list" placeholder="พิมพ์ชื่องาน หรือคลิกเลือกจากรายการ..." className="w-full p-3 border rounded-xl font-bold text-blue-800 outline-none focus:ring-2 focus:ring-blue-500" value={newTask.topic} onChange={e => setNewTask({...newTask, topic: e.target.value})} autoFocus/>
+              <datalist id="topic-list">
+                {allTopics.map((t, idx) => <option key={idx} value={t} />)}
+              </datalist>
             </div>
-            <textarea placeholder="รายละเอียดเพิ่มเติม..." className="w-full p-3 border rounded-xl text-sm h-20 outline-none" value={newTask.details} onChange={e => setNewTask({...newTask, details: e.target.value})}/>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-[10px] font-black text-indigo-500 uppercase mb-1 block">📅 กำหนดเสร็จ</label>
+                <input type="date" className="w-full p-2.5 border rounded-xl bg-indigo-50 text-sm font-bold text-indigo-800 outline-none" value={newTask.dueDate} onChange={e => setNewTask({...newTask, dueDate: e.target.value})}/>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">เลขอ้างอิง (ถ้ามี)</label>
+                <input type="text" placeholder="ใบส่งของ / บิล" className="w-full p-2.5 border rounded-xl text-sm outline-none" value={newTask.documentNo} onChange={e => setNewTask({...newTask, documentNo: e.target.value})}/>
+              </div>
+            </div>
+            
+            <div>
+              <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">รายละเอียดงาน (อธิบายโจทย์ให้ผู้เกี่ยวข้องทราบ)</label>
+              <textarea placeholder="ใส่รายละเอียดที่นี่..." className="w-full p-3 border rounded-xl text-sm h-20 outline-none resize-none" value={newTask.details} onChange={e => setNewTask({...newTask, details: e.target.value})}/>
+            </div>
+            
             <div>
               <label className="text-[10px] font-black text-blue-600 uppercase mb-2 block">👥 เลือกผู้เกี่ยวข้อง</label>
               <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border-2 border-blue-100 p-2 rounded-xl bg-blue-50/50">
                 {settings.users.map((u: string) => (
                   <label key={u} className="flex items-center gap-2 text-xs font-bold cursor-pointer hover:bg-blue-100 p-1.5 rounded-lg transition-colors">
-                    <input type="checkbox" className="rounded" checked={newTask.relatedPersons.includes(u)} onChange={e => { if(e.target.checked) setNewTask({...newTask, relatedPersons: [...newTask.relatedPersons, u]}); else setNewTask({...newTask, relatedPersons: newTask.relatedPersons.filter(n => n !== u)})}}/> {u}
+                    <input type="checkbox" className="rounded text-blue-600" checked={newTask.relatedPersons.includes(u)} onChange={e => { if(e.target.checked) setNewTask({...newTask, relatedPersons: [...newTask.relatedPersons, u]}); else setNewTask({...newTask, relatedPersons: newTask.relatedPersons.filter(n => n !== u)})}}/> {u}
                   </label>
                 ))}
               </div>
             </div>
-            <button type="submit" className="w-full bg-blue-600 text-white p-3.5 rounded-xl font-bold shadow-lg">สร้างห้องสนทนางาน</button>
+            <button type="submit" disabled={isLoading} className="w-full bg-blue-600 text-white p-3.5 rounded-xl font-bold shadow-lg flex justify-center items-center gap-2">
+              {isLoading ? <Loader2 className="w-5 h-5 animate-spin"/> : 'สร้างห้องสนทนางาน'}
+            </button>
           </form>
         </div>
       )}
