@@ -167,7 +167,7 @@ export default function App() {
         requester: loggedInUser.name, 
         individualStatus, 
         unreadBy: [...newTask.relatedPersons].filter(p => p !== loggedInUser.name), 
-        currentStep: 0, hasIssue: false, isArchived: false, createdAt: serverTimestamp(), lastActivity: serverTimestamp() 
+        currentStep: 0, hasIssue: false, issueReporter: null, isArchived: false, createdAt: serverTimestamp(), lastActivity: serverTimestamp() 
       });
       await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 ภารกิจใหม่: ${newTask.topic}\n🔖 อ้างอิง: ${newTask.documentNo || '-'}\n📝 ข้อมูล: ${newTask.details || '-'}`, timestamp: serverTimestamp(), isSystem: true });
       showToast('✅ สตาร์ทภารกิจสำเร็จ!'); setIsModalOpen(false); setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '' });
@@ -203,7 +203,7 @@ export default function App() {
     const globalMin = allSteps.length > 0 ? Math.min(...allSteps) : 0;
     
     const updates: any = { individualStatus: newInd, lastActivity: serverTimestamp() };
-    if (globalMin > (selectedTask.currentStep || 0)) { updates.currentStep = globalMin; updates.hasIssue = false; }
+    if (globalMin > (selectedTask.currentStep || 0)) { updates.currentStep = globalMin; updates.hasIssue = false; updates.issueReporter = null; }
     
     const unreadList = [...(selectedTask.relatedPersons || []), selectedTask.requester].filter(p => p && p !== loggedInUser.name);
     updates.unreadBy = arrayUnion(...unreadList);
@@ -214,12 +214,22 @@ export default function App() {
     } catch(e) { showToast('❌ อัปเดตสถานะไม่ได้ (เช็คสิทธิ์ Firebase)'); }
   };
 
+  // 🚨 แจ้งติดปัญหา (อัปเกรดบันทึกคนแจ้ง)
   const reportIssue = async () => {
     if (!selectedTask || !selectedTaskId) return;
     try {
-      await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: true, lastActivity: serverTimestamp() });
-      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `🚨 ${loggedInUser.name} แจ้งเหตุฉุกเฉิน (Pit Stop)!`, timestamp: serverTimestamp(), isSystem: true });
+      await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: true, issueReporter: loggedInUser.name, lastActivity: serverTimestamp() });
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `🚨 ${loggedInUser.name} แจ้งเหตุฉุกเฉิน (Pit Stop)! กรุณาตรวจสอบด่วน`, timestamp: serverTimestamp(), isSystem: true });
     } catch(e) { showToast('❌ แจ้งปัญหาไม่ได้ (เช็คสิทธิ์ Firebase)'); }
+  };
+
+  // ✅ แจ้งเคลียร์ปัญหา (ตรวจสอบสิทธิ์ไขว้)
+  const resolveIssue = async () => {
+    if (!selectedTask || !selectedTaskId) return;
+    try {
+      await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: false, issueReporter: null, lastActivity: serverTimestamp() });
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `✅ ${loggedInUser.name} แจ้งแก้ไขปัญหาของ ${selectedTask.issueReporter || 'ทีมงาน'} เรียบร้อยแล้ว! รถพร้อมแข่งต่อ`, timestamp: serverTimestamp(), isSystem: true });
+    } catch(e) { showToast('❌ แก้ไขปัญหาไม่ได้ (เช็คสิทธิ์ Firebase)'); }
   };
 
   const addPersonToTask = async (pName: string) => {
@@ -345,6 +355,15 @@ export default function App() {
                 <option value="status">Sort: ตามสถานะ</option>
               </select>
             </div>
+            {showFilters && (
+              <div className="p-3 bg-white dark:bg-slate-950 rounded-xl border border-blue-100 dark:border-slate-800 space-y-3 shadow-inner transition-colors">
+                 {/* 🔒 กรองสิทธิ์: แสดงตัวกรองผู้สั่งงาน เฉพาะคนที่เป็น Admin เท่านั้น */}
+                 {loggedInUser?.role === 'Admin' && (
+                   <div className="flex justify-between items-center"><span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">สั่งโดย:</span><select value={filterRequester} onChange={e=>setFilterRequester(e.target.value)} className="text-[10px] font-bold p-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-white rounded outline-none">{['All', ...(settings?.users || [])].map(u=><option key={u} value={u}>{u}</option>)}</select></div>
+                 )}
+                 <div className="flex justify-between items-center"><span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">สถานะ:</span><select value={filterStatus} onChange={e=>setFilterStatus(e.target.value)} className="text-[10px] font-bold p-1.5 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-white rounded outline-none"><option value="All">ทุกสถานะ</option>{steps.map((s,i)=><option key={i} value={i}>{s.label}</option>)}</select></div>
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-100/50 dark:bg-slate-950 transition-colors">
@@ -392,17 +411,31 @@ export default function App() {
                   {selectedTask.documentNo && <div className="inline-flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-3 py-1 rounded-md text-xs font-black mb-3 border border-blue-200 dark:border-blue-500/30 tracking-widest"><FileText className="w-3 h-3"/> REF: {selectedTask.documentNo}</div>}
                   {selectedTask.details && <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mb-3 whitespace-pre-wrap shadow-inner">{selectedTask.details}</div>}
                   
-                  {/* 🟢 นำแถบเวลาที่สร้างกลับมาใส่ตรงนี้ครับ! */}
                   <div className="flex flex-wrap gap-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
                     <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-blue-500"/> OP: <span className="text-slate-600 dark:text-slate-300">{selectedTask.requester}</span></span>
                     <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-amber-500"/> TGT: <span className="text-amber-500 dark:text-amber-400">{selectedTask.dueDate}</span></span>
                     <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-emerald-500"/> เริ่ม: <span className="text-emerald-600 dark:text-emerald-400">{selectedTask.createdAt?.toDate ? selectedTask.createdAt.toDate().toLocaleString('th-TH', {dateStyle: 'short', timeStyle: 'short'}) : 'กำลังบันทึก...'}</span></span>
                   </div>
-
                 </div>
                 <div className="flex flex-col gap-2 shrink-0">
                   {selectedTask.requester === loggedInUser?.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black shadow-lg dark:shadow-[0_0_15px_rgba(132,204,22,0.4)] hover:bg-black dark:hover:bg-lime-500 transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
-                  <button onClick={reportIssue} disabled={selectedTask.hasIssue || (selectedTask.currentStep || 0) >= 3} className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 dark:border-rose-500/50 text-red-500 dark:text-rose-500 bg-red-50 dark:bg-rose-500/10 hover:bg-red-100 dark:hover:bg-rose-500/20 disabled:opacity-30 uppercase italic flex items-center justify-center gap-1.5 transition-all"><AlertTriangle className="w-3.5 h-3.5"/> PIT STOP</button>
+                  
+                  {/* 🚨 ปุ่มจัดการปัญหาแบบใหม่ (แจ้ง/แก้ สลับกันตามสิทธิ์) */}
+                  {selectedTask.hasIssue ? (
+                    <button 
+                      onClick={resolveIssue} 
+                      disabled={selectedTask.issueReporter === loggedInUser?.name && loggedInUser?.role !== 'Admin'} 
+                      className="px-4 py-2.5 rounded-xl text-xs font-black border border-emerald-500/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 disabled:opacity-30 disabled:hover:bg-transparent uppercase italic flex items-center justify-center gap-1.5 transition-all">
+                      <CheckCircle2 className="w-3.5 h-3.5"/> เคลียร์ปัญหาแล้ว
+                    </button>
+                  ) : (
+                    <button 
+                      onClick={reportIssue} 
+                      disabled={(selectedTask.currentStep || 0) >= 3} 
+                      className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 dark:border-rose-500/50 text-red-500 dark:text-rose-500 bg-red-50 dark:bg-rose-500/10 hover:bg-red-100 dark:hover:bg-rose-500/20 disabled:opacity-30 uppercase italic flex items-center justify-center gap-1.5 transition-all">
+                      <AlertTriangle className="w-3.5 h-3.5"/> PIT STOP
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="space-y-4 pt-2">
@@ -478,6 +511,7 @@ export default function App() {
         )}
       </div>
 
+      {/* --- MODALS --- */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
           <form onSubmit={handleCreateTask} className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-md p-8 space-y-5 shadow-2xl dark:shadow-[0_0_50px_rgba(0,0,0,0.8)] border-b-8 border-blue-600 dark:border-b-0 dark:border dark:border-slate-700 animate-in zoom-in-95 duration-200 transition-colors">
