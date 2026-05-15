@@ -78,11 +78,10 @@ export default function App() {
   const allTopics = Object.values(settings?.topicMapping || {}).flat() as string[];
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
-  // 🛡️ [เซฟตี้ 1] ดักจับ Error ตอนอ่านงานแล้วเคลียร์จุดเขียว (Unread)
   useEffect(() => {
     if (selectedTaskId && loggedInUser?.name) {
       updateDoc(doc(db, 'tasks', selectedTaskId), { unreadBy: arrayRemove(loggedInUser.name) })
-        .catch((e) => console.log("แจ้งเตือน: ไม่มีสิทธิ์เคลียร์จุดเขียว (ข้ามกระบวนการนี้)"));
+        .catch((e) => console.log("แจ้งเตือน: ไม่มีสิทธิ์เคลียร์จุดเขียว"));
     }
   }, [selectedTaskId, loggedInUser]);
 
@@ -100,7 +99,6 @@ export default function App() {
     fetchMasterData();
   }, []);
 
-  // 🛡️ [เซฟตี้ 2] ดักจับ Error ตอนส่งสถานะ Online
   useEffect(() => {
     if (!loggedInUser?.name) return;
     const userRef = doc(db, 'presence', loggedInUser.name);
@@ -124,7 +122,6 @@ export default function App() {
     };
   }, [loggedInUser]);
 
-  // 🛡️ [เซฟตี้ 3] ดักจับ Error ตอนโหลดคิวงาน
   useEffect(() => {
     if (!loggedInUser) return;
     return onSnapshot(query(collection(db, 'tasks'), orderBy('lastActivity', 'desc')), (snap) => {
@@ -132,7 +129,6 @@ export default function App() {
     }, (err) => console.log("แจ้งเตือน: อ่านคิวงานไม่ได้", err));
   }, [loggedInUser]);
 
-  // 🛡️ [เซฟตี้ 4] ดักจับ Error ตอนโหลดแชท
   useEffect(() => {
     if (!selectedTaskId) return;
     return onSnapshot(query(collection(db, 'tasks', selectedTaskId, 'chats'), orderBy('timestamp', 'asc')), (snap) => {
@@ -249,7 +245,6 @@ export default function App() {
     }});
   };
 
-  // 🛡️ [เซฟตี้ 5] ดักจับ Index ทะลุของเกจวัดพลัง
   const renderGauge = (currentStep: number, hasIssue: boolean) => {
     const safeStep = (currentStep >= 0 && currentStep <= 3) ? currentStep : 0;
     return (
@@ -268,7 +263,6 @@ export default function App() {
     const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'Admin';
     if (!isRelated) return false; 
     
-    // 🛡️ [เซฟตี้ 6] ดักจับกรณีชื่องานว่างเปล่า แล้วพิมพ์ค้นหา
     const safeTopic = (t.topic || '').toString().toLowerCase();
     const safeDocNo = (t.documentNo || '').toString().toLowerCase();
     const q = searchQuery.toLowerCase();
@@ -294,7 +288,6 @@ export default function App() {
     </div>
   );
 
-  // 🛡️ [เซฟตี้ 7] ดึงข้อมูลสเต็ปปัจจุบันอย่างปลอดภัย สำหรับห้องแชท
   const safeGlobalStepIdx = (selectedTask?.currentStep >= 0 && selectedTask?.currentStep <= 3) ? selectedTask.currentStep : 0;
   const globalStepData = steps[safeGlobalStepIdx] || steps[0];
 
@@ -398,10 +391,14 @@ export default function App() {
                   <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-3 italic uppercase">{selectedTask.topic}</h2>
                   {selectedTask.documentNo && <div className="inline-flex items-center gap-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 px-3 py-1 rounded-md text-xs font-black mb-3 border border-blue-200 dark:border-blue-500/30 tracking-widest"><FileText className="w-3 h-3"/> REF: {selectedTask.documentNo}</div>}
                   {selectedTask.details && <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mb-3 whitespace-pre-wrap shadow-inner">{selectedTask.details}</div>}
+                  
+                  {/* 🟢 นำแถบเวลาที่สร้างกลับมาใส่ตรงนี้ครับ! */}
                   <div className="flex flex-wrap gap-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
                     <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-blue-500"/> OP: <span className="text-slate-600 dark:text-slate-300">{selectedTask.requester}</span></span>
                     <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-amber-500"/> TGT: <span className="text-amber-500 dark:text-amber-400">{selectedTask.dueDate}</span></span>
+                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-emerald-500"/> เริ่ม: <span className="text-emerald-600 dark:text-emerald-400">{selectedTask.createdAt?.toDate ? selectedTask.createdAt.toDate().toLocaleString('th-TH', {dateStyle: 'short', timeStyle: 'short'}) : 'กำลังบันทึก...'}</span></span>
                   </div>
+
                 </div>
                 <div className="flex flex-col gap-2 shrink-0">
                   {selectedTask.requester === loggedInUser?.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black shadow-lg dark:shadow-[0_0_15px_rgba(132,204,22,0.4)] hover:bg-black dark:hover:bg-lime-500 transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
