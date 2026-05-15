@@ -5,7 +5,7 @@ import { db, storage } from './firebase';
 import { 
   Search, CheckCircle2, Clock, 
   Paperclip, Send, AlertTriangle, ArrowLeft,
-  MessageSquare, LayoutList, User, Plus, Loader2, LogOut, X, Package, Archive, CalendarDays, Trash2, Users, Info, UserPlus, FileText
+  MessageSquare, User, Plus, Loader2, LogOut, X, Package, Archive, CalendarDays, Trash2, Users, Info, UserPlus, FileText
 } from 'lucide-react';
 
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbym2Jl1qlXHqaNJq7S0TbhhsXegSDAPwIzf7h8_q08rOkkyY60G4UWy_NeHVsFIenCO/exec';
@@ -21,7 +21,7 @@ export default function App() {
     isOpen: false, title: '', text: '', type: 'info', onConfirm: () => {}
   });
   
-  // 🟢 1. ดึง topicMapping มาจาก Sheets ด้วย
+  // ป้องกันค่า null ตั้งแต่เริ่มต้น
   const [settings, setSettings] = useState({ users: [], topicMapping: {} });
   const [tasks, setTasks] = useState<any[]>([]);
   const [chats, setChats] = useState<any>({});
@@ -42,13 +42,14 @@ export default function App() {
 
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
-  // แปลงหัวข้อทั้งหมดจาก Sheets มาเป็น List ให้เลือก
-  const allTopics = Object.values(settings.topicMapping || {}).flat() as string[];
+  const allTopics = Object.values(settings?.topicMapping || {}).flat() as string[];
 
   useEffect(() => {
     if (selectedTaskId && loggedInUser) {
-      const taskRef = doc(db, 'tasks', selectedTaskId);
-      updateDoc(taskRef, { unreadBy: arrayRemove(loggedInUser.name) });
+      try {
+        const taskRef = doc(db, 'tasks', selectedTaskId);
+        updateDoc(taskRef, { unreadBy: arrayRemove(loggedInUser.name) });
+      } catch (e) { console.error(e); }
     }
   }, [selectedTaskId, loggedInUser]);
 
@@ -58,50 +59,72 @@ export default function App() {
         const res = await fetch(WEB_APP_URL);
         const text = await res.text();
         const data = JSON.parse(text);
-        if (data.settings) setSettings({ users: data.settings.users || [], topicMapping: data.settings.topicMapping || {} });
-      } catch (error) { console.error("Sheets Error:", error); }
+        if (data && data.settings) {
+          setSettings({ 
+            users: data.settings.users || [], 
+            topicMapping: data.settings.topicMapping || {} 
+          });
+        }
+      } catch (error) { 
+        console.error("Sheets Error:", error); 
+        // ถ้าโหลด Google Sheets พัง ให้มีข้อมูลจำลองไปก่อนเพื่อไม่ให้แอปช็อก
+        setSettings({ users: ['อภิสิทธิ์', 'แอดมิน'], topicMapping: {} });
+      }
     };
-    const savedUser = localStorage.getItem('stp_user_session');
-    if (savedUser) setLoggedInUser(JSON.parse(savedUser)); 
+
+    try {
+      const savedUser = localStorage.getItem('stp_user_session');
+      if (savedUser) setLoggedInUser(JSON.parse(savedUser)); 
+    } catch (e) {
+      localStorage.removeItem('stp_user_session');
+    }
+    
     fetchMasterData();
   }, []);
 
   useEffect(() => {
     if (!loggedInUser) return;
-    const userRef = doc(db, 'presence', loggedInUser.name);
-    setDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() }, { merge: true });
-    const handleBeforeUnload = () => { updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }); };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    const unsubscribePresence = onSnapshot(collection(db, 'presence'), (snapshot) => {
-      const presenceData: any = {};
-      snapshot.forEach(doc => { presenceData[doc.id] = doc.data(); });
-      setUserPresence(presenceData);
-    });
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() });
-      unsubscribePresence();
-    };
+    try {
+      const userRef = doc(db, 'presence', loggedInUser.name);
+      setDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() }, { merge: true });
+      const handleBeforeUnload = () => { updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }); };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      
+      const unsubscribePresence = onSnapshot(collection(db, 'presence'), (snapshot) => {
+        const presenceData: any = {};
+        snapshot.forEach(doc => { presenceData[doc.id] = doc.data(); });
+        setUserPresence(presenceData);
+      });
+      return () => {
+        window.removeEventListener('beforeunload', handleBeforeUnload);
+        updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }).catch(()=>{});
+        unsubscribePresence();
+      };
+    } catch (e) { console.error(e); }
   }, [loggedInUser]);
 
   useEffect(() => {
     if (!loggedInUser) return;
-    const q = query(collection(db, 'tasks'), orderBy('lastActivity', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const tasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setTasks(tasksData);
-    });
-    return () => unsubscribe();
+    try {
+      const q = query(collection(db, 'tasks'), orderBy('lastActivity', 'desc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const tasksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setTasks(tasksData);
+      });
+      return () => unsubscribe();
+    } catch (e) { console.error(e); }
   }, [loggedInUser]);
 
   useEffect(() => {
     if (!selectedTaskId) return;
-    const q = query(collection(db, 'tasks', selectedTaskId, 'chats'), orderBy('timestamp', 'asc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const chatData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setChats((prev: any) => ({ ...prev, [selectedTaskId]: chatData }));
-    });
-    return () => unsubscribe();
+    try {
+      const q = query(collection(db, 'tasks', selectedTaskId, 'chats'), orderBy('timestamp', 'asc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const chatData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setChats((prev: any) => ({ ...prev, [selectedTaskId]: chatData }));
+      });
+      return () => unsubscribe();
+    } catch (e) { console.error(e); }
   }, [selectedTaskId]);
 
   const handleLogin = async (e: any) => {
@@ -119,7 +142,9 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (loggedInUser) await updateDoc(doc(db, 'presence', loggedInUser.name), { isOnline: false, lastSeen: serverTimestamp() });
+    if (loggedInUser) {
+      try { await updateDoc(doc(db, 'presence', loggedInUser.name), { isOnline: false, lastSeen: serverTimestamp() }); } catch(e){}
+    }
     localStorage.removeItem('stp_user_session'); setLoggedInUser(null);
   };
 
@@ -148,7 +173,6 @@ export default function App() {
         lastActivity: serverTimestamp() 
       });
       
-      // 🟢 2. ปรับข้อความระบบแรกสุด ให้โชว์รายละเอียดที่สั่งงานไปเลย
       await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { 
         sender: 'System', 
         text: `🆕 งานใหม่: ${newTask.topic}\n🔖 เลขอ้างอิง: ${newTask.documentNo || '-'}\n📝 รายละเอียด: ${newTask.details || '-'}`, 
@@ -169,36 +193,40 @@ export default function App() {
     setIsUploading(true);
     let fileUrl = null;
     let fileName = null;
-    if (chatFile) {
-      const fileRef = ref(storage, `uploads/${selectedTaskId}/${Date.now()}_${chatFile.name}`);
-      await uploadBytes(fileRef, chatFile);
-      fileUrl = await getDownloadURL(fileRef);
-      fileName = chatFile.name;
-    }
-    const txt = chatInput;
-    setChatInput(''); setChatFile(null);
-    
-    const notifyList = [...selectedTask.relatedPersons, selectedTask.requester].filter(p => p !== loggedInUser.name);
+    try {
+      if (chatFile) {
+        const fileRef = ref(storage, `uploads/${selectedTaskId}/${Date.now()}_${chatFile.name}`);
+        await uploadBytes(fileRef, chatFile);
+        fileUrl = await getDownloadURL(fileRef);
+        fileName = chatFile.name;
+      }
+      const txt = chatInput;
+      setChatInput(''); setChatFile(null);
+      
+      const notifyList = [...(selectedTask?.relatedPersons || []), selectedTask?.requester].filter(p => p && p !== loggedInUser.name);
 
-    await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: loggedInUser.name, text: txt, fileUrl, fileName, timestamp: serverTimestamp(), isSystem: false });
-    await updateDoc(doc(db, 'tasks', selectedTaskId), { 
-      lastActivity: serverTimestamp(),
-      unreadBy: arrayUnion(...notifyList)
-    });
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: loggedInUser.name, text: txt, fileUrl, fileName, timestamp: serverTimestamp(), isSystem: false });
+      await updateDoc(doc(db, 'tasks', selectedTaskId), { 
+        lastActivity: serverTimestamp(),
+        unreadBy: arrayUnion(...notifyList)
+      });
+    } catch(err) {
+      showToast('❌ ส่งข้อความ/ไฟล์ล้มเหลว');
+    }
     setIsUploading(false);
   };
 
   const advanceMyStep = async () => {
     if (!selectedTask || !selectedTaskId) return;
-    const myCurrentStep = selectedTask.individualStatus[loggedInUser.name] || 0;
+    const myCurrentStep = selectedTask.individualStatus?.[loggedInUser.name] || 0;
     if (myCurrentStep >= 3) return;
     
     const myNextStep = myCurrentStep + 1;
-    const newIndividualStatus = { ...selectedTask.individualStatus, [loggedInUser.name]: myNextStep };
-    const allSteps = selectedTask.relatedPersons.map((p: string) => newIndividualStatus[p] || 0);
-    const globalMinStep = Math.min(...allSteps);
+    const newIndividualStatus = { ...(selectedTask.individualStatus || {}), [loggedInUser.name]: myNextStep };
+    const allSteps = (selectedTask.relatedPersons || []).map((p: string) => newIndividualStatus[p] || 0);
+    const globalMinStep = allSteps.length > 0 ? Math.min(...allSteps) : 0;
 
-    const notifyList = [...selectedTask.relatedPersons, selectedTask.requester].filter(p => p !== loggedInUser.name);
+    const notifyList = [...(selectedTask.relatedPersons || []), selectedTask.requester].filter(p => p && p !== loggedInUser.name);
 
     const updates: any = { 
       individualStatus: newIndividualStatus, 
@@ -211,16 +239,26 @@ export default function App() {
       updates.hasIssue = false;
     }
 
-    await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
-    await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `👤 ${loggedInUser.name} เปลี่ยนสถานะส่วนตัวเป็น: ${steps[myNextStep]}`, timestamp: serverTimestamp(), isSystem: true });
+    try {
+      await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `👤 ${loggedInUser.name} เปลี่ยนสถานะส่วนตัวเป็น: ${steps[myNextStep]}`, timestamp: serverTimestamp(), isSystem: true });
+    } catch(e) { console.error(e); }
+  };
+
+  const reportIssue = async () => {
+    if (!selectedTask || !selectedTaskId) return;
+    try {
+      await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: true, lastActivity: serverTimestamp() });
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `⚠️ ${loggedInUser.name} แจ้งว่างานติดปัญหา`, timestamp: serverTimestamp(), isSystem: true });
+    } catch(e){}
   };
 
   const addPersonToTask = async (personName: string) => {
     if (!selectedTask || !selectedTaskId) return;
-    if (selectedTask.relatedPersons.includes(personName)) return showToast('พนักงานคนนี้อยู่ในกลุ่มแล้ว');
+    if ((selectedTask.relatedPersons || []).includes(personName)) return showToast('พนักงานคนนี้อยู่ในกลุ่มแล้ว');
 
-    const newRelatedPersons = [...selectedTask.relatedPersons, personName];
-    const newIndividualStatus = { ...selectedTask.individualStatus, [personName]: 0 };
+    const newRelatedPersons = [...(selectedTask.relatedPersons || []), personName];
+    const newIndividualStatus = { ...(selectedTask.individualStatus || {}), [personName]: 0 };
     const updates = {
       relatedPersons: newRelatedPersons,
       individualStatus: newIndividualStatus,
@@ -229,14 +267,16 @@ export default function App() {
       unreadBy: arrayUnion(...newRelatedPersons)
     };
 
-    await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
-    await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { 
-      sender: 'System', 
-      text: `➕ ${loggedInUser.name} ดึง "${personName}" เข้ามาร่วมงาน (สถานะปรับเป็น: รอรับงาน)`, 
-      timestamp: serverTimestamp(), 
-      isSystem: true 
-    });
-    showToast(`ดึงคุณ ${personName} เข้าร่วมงานเรียบร้อย`);
+    try {
+      await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { 
+        sender: 'System', 
+        text: `➕ ${loggedInUser.name} ดึง "${personName}" เข้ามาร่วมงาน (สถานะปรับเป็น: รอรับงาน)`, 
+        timestamp: serverTimestamp(), 
+        isSystem: true 
+      });
+      showToast(`ดึงคุณ ${personName} เข้าร่วมงานเรียบร้อย`);
+    } catch(e) {}
   };
 
   const archiveTask = async () => {
@@ -245,8 +285,10 @@ export default function App() {
     setConfirmModal({
       isOpen: true, title: 'ปิดจ๊อบถาวร', text: 'ยืนยันปิดงานถาวรและเก็บเข้าคลังประวัติ?', type: 'info',
       onConfirm: async () => {
-        await updateDoc(doc(db, 'tasks', selectedTaskId), { isArchived: true, lastActivity: serverTimestamp() });
-        setSelectedTaskId(null);
+        try {
+          await updateDoc(doc(db, 'tasks', selectedTaskId), { isArchived: true, lastActivity: serverTimestamp() });
+          setSelectedTaskId(null);
+        } catch(e) {}
       }
     });
   };
@@ -256,7 +298,7 @@ export default function App() {
     if (loggedInUser.role !== 'Admin') return showToast('❌ ไม่มีสิทธิ์ลบงาน');
     setConfirmModal({
       isOpen: true, title: 'ลบงานถาวร', text: '🚨 ลบงานนี้ถาวร ยืนยันหรือไม่?', type: 'danger',
-      onConfirm: async () => { await deleteDoc(doc(db, 'tasks', taskId)); if (selectedTaskId === taskId) setSelectedTaskId(null); }
+      onConfirm: async () => { try { await deleteDoc(doc(db, 'tasks', taskId)); if (selectedTaskId === taskId) setSelectedTaskId(null); } catch(e){} }
     });
   };
 
@@ -275,7 +317,7 @@ export default function App() {
     );
   }
 
-  const visibleTasks = tasks.filter(t => !t.isArchived && (t.topic.toLowerCase().includes(searchQuery.toLowerCase()) || (t.documentNo && t.documentNo.toLowerCase().includes(searchQuery.toLowerCase()))));
+  const visibleTasks = tasks.filter(t => !t.isArchived && (t.topic?.toLowerCase().includes(searchQuery.toLowerCase()) || (t.documentNo && t.documentNo.toLowerCase().includes(searchQuery.toLowerCase()))));
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
@@ -292,7 +334,7 @@ export default function App() {
         <div className={`w-full md:w-1/3 bg-white border-r flex flex-col ${selectedTaskId ? 'hidden md:flex' : 'flex'}`}>
           <div className="bg-slate-800 text-white p-2 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700 custom-scrollbar">
             <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1 shrink-0">ทีมงาน:</div>
-            {settings.users.map((u: string) => {
+            {(settings?.users || []).map((u: string) => {
               const isOnline = userPresence[u]?.isOnline;
               return (
                 <div key={u} className="flex items-center gap-1.5 shrink-0 bg-slate-700/50 px-2 py-1 rounded-full border border-slate-600">
@@ -315,9 +357,9 @@ export default function App() {
           </div>
           <div className="flex-1 overflow-y-auto p-2 space-y-2">
             {visibleTasks.map(task => {
-               const isRelated = task.relatedPersons?.includes(loggedInUser.name) || task.requester === loggedInUser.name || loggedInUser.role === 'Admin';
+               const isRelated = (task.relatedPersons || []).includes(loggedInUser.name) || task.requester === loggedInUser.name || loggedInUser.role === 'Admin';
                if (!isRelated) return null; 
-               const isUnread = task.unreadBy?.includes(loggedInUser.name);
+               const isUnread = (task.unreadBy || []).includes(loggedInUser.name);
 
                return (
                 <div key={task.id} onClick={() => setSelectedTaskId(task.id)} className={`p-3 rounded-xl border cursor-pointer relative group transition-all ${selectedTaskId === task.id ? 'bg-blue-50 border-blue-300' : 'bg-white hover:border-slate-300'}`}>
@@ -328,7 +370,7 @@ export default function App() {
                   <h3 className={`text-sm truncate pr-8 ${isUnread ? 'font-black text-slate-900' : 'font-bold text-slate-700'}`}>{task.topic}</h3>
                   <div className="mt-2 flex justify-between items-end">
                     <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold">กำหนด: {task.dueDate}</span>
-                    <span className={`text-[10px] font-bold ${task.hasIssue ? 'text-red-500 animate-pulse' : 'text-blue-600'}`}>{task.hasIssue ? '⚠️ ติดปัญหา' : steps[task.currentStep]}</span>
+                    <span className={`text-[10px] font-bold ${task.hasIssue ? 'text-red-500 animate-pulse' : 'text-blue-600'}`}>{task.hasIssue ? '⚠️ ติดปัญหา' : steps[task.currentStep || 0]}</span>
                   </div>
                 </div>
               );
@@ -345,7 +387,6 @@ export default function App() {
                   <button onClick={() => setSelectedTaskId(null)} className="md:hidden text-blue-600 text-xs font-bold mb-2 flex items-center gap-1"><ArrowLeft className="w-3 h-3"/> กลับ</button>
                   <h2 className="font-black text-lg text-slate-800 leading-tight mb-2">{selectedTask.topic}</h2>
                   
-                  {/* 🟢 3. เพิ่มการแสดงผลรายละเอียดและเลขอ้างอิงที่หัวแชท */}
                   {selectedTask.documentNo && <div className="text-sm font-bold text-blue-600 mb-2 flex items-center gap-1"><FileText className="w-4 h-4"/> เลขอ้างอิง: {selectedTask.documentNo}</div>}
                   {selectedTask.details && <div className="text-sm text-slate-600 bg-slate-50 p-3 rounded-xl border border-slate-100 mb-3 whitespace-pre-wrap">{selectedTask.details}</div>}
                   
@@ -366,7 +407,7 @@ export default function App() {
               <div className="mb-4">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">ความคืบหน้าภาพรวม</div>
                 <div className="flex justify-between px-1">
-                  {steps.map((s, i) => <div key={i} className={`h-2 flex-1 mx-0.5 rounded-full ${i <= selectedTask.currentStep ? (selectedTask.hasIssue && i === selectedTask.currentStep ? 'bg-red-500 animate-pulse' : 'bg-green-500') : 'bg-slate-200'}`}></div>)}
+                  {steps.map((s, i) => <div key={i} className={`h-2 flex-1 mx-0.5 rounded-full ${i <= (selectedTask.currentStep||0) ? (selectedTask.hasIssue && i === selectedTask.currentStep ? 'bg-red-500 animate-pulse' : 'bg-green-500') : 'bg-slate-200'}`}></div>)}
                 </div>
               </div>
 
@@ -376,7 +417,7 @@ export default function App() {
                   <button onClick={() => setIsAddPersonModalOpen(true)} className="p-1 bg-indigo-100 text-indigo-600 rounded hover:bg-indigo-200 transition-colors"><UserPlus className="w-3.5 h-3.5"/></button>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {selectedTask.relatedPersons?.map((person: string) => {
+                  {(selectedTask.relatedPersons || []).map((person: string) => {
                     const personStep = selectedTask.individualStatus?.[person] || 0;
                     const isMe = person === loggedInUser.name;
                     return (
@@ -431,7 +472,7 @@ export default function App() {
           <div className="bg-white rounded-3xl w-full max-w-xs p-6 shadow-2xl">
             <h3 className="font-black text-lg mb-4 flex items-center gap-2"><UserPlus className="w-5 h-5 text-indigo-600"/> ดึงพนักงานเพิ่ม</h3>
             <div className="max-h-60 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
-              {settings.users.filter(u => !selectedTask?.relatedPersons.includes(u)).map((u: string) => (
+              {(settings?.users || []).filter(u => !(selectedTask?.relatedPersons || []).includes(u)).map((u: string) => (
                 <button key={u} onClick={() => { addPersonToTask(u); setIsAddPersonModalOpen(false); }} className="w-full text-left p-3 rounded-xl border border-slate-100 hover:bg-indigo-50 hover:border-indigo-200 transition-all text-sm font-bold text-slate-700 flex justify-between items-center group">
                   {u} <Plus className="w-4 h-4 opacity-0 group-hover:opacity-100 text-indigo-600"/>
                 </button>
@@ -442,7 +483,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 🟢 1. อัปเกรดช่อง Topic เป็น Datalist ให้พิมพ์ค้นหาได้ และกดเลือกได้ */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in">
           <form onSubmit={handleCreateTask} className="bg-white rounded-3xl w-full max-w-md p-6 space-y-4 shadow-2xl">
@@ -478,7 +518,7 @@ export default function App() {
             <div>
               <label className="text-[10px] font-black text-blue-600 uppercase mb-2 block">👥 เลือกผู้เกี่ยวข้อง</label>
               <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border-2 border-blue-100 p-2 rounded-xl bg-blue-50/50">
-                {settings.users.map((u: string) => (
+                {(settings?.users || []).map((u: string) => (
                   <label key={u} className="flex items-center gap-2 text-xs font-bold cursor-pointer hover:bg-blue-100 p-1.5 rounded-lg transition-colors">
                     <input type="checkbox" className="rounded text-blue-600" checked={newTask.relatedPersons.includes(u)} onChange={e => { if(e.target.checked) setNewTask({...newTask, relatedPersons: [...newTask.relatedPersons, u]}); else setNewTask({...newTask, relatedPersons: newTask.relatedPersons.filter(n => n !== u)})}}/> {u}
                   </label>
