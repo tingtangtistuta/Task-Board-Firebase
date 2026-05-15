@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, addDoc, updateDoc, doc, serverTimestamp, query, orderBy, deleteDoc, setDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from './firebase'; 
 import { 
@@ -17,7 +17,6 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [toastMsg, setToastMsg] = useState('');
   
-  // 🟢 State สำหรับหน้าต่างยืนยัน (Custom Confirm Dialog)
   const [confirmModal, setConfirmModal] = useState<{isOpen: boolean, title: string, text: string, type: 'danger' | 'warning' | 'info', onConfirm: () => void}>({
     isOpen: false, title: '', text: '', type: 'info', onConfirm: () => {}
   });
@@ -25,6 +24,9 @@ export default function App() {
   const [settings, setSettings] = useState({ users: [] });
   const [tasks, setTasks] = useState<any[]>([]);
   const [chats, setChats] = useState<any>({});
+  
+  // 🟢 1. State สำหรับเก็บข้อมูลสถานะ Online/Offline ของทุกคน
+  const [userPresence, setUserPresence] = useState<any>({});
   
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const selectedTask = tasks.find(t => t.id === selectedTaskId) || null;
@@ -40,6 +42,7 @@ export default function App() {
 
   const showToast = (msg: string) => { setToastMsg(msg); setTimeout(() => setToastMsg(''), 4000); };
 
+  // โหลด Master Data
   useEffect(() => {
     const fetchMasterData = async () => {
       try {
@@ -54,6 +57,38 @@ export default function App() {
     fetchMasterData();
   }, []);
 
+  // 🟢 2. ระบบเครื่องจับความเคลื่อนไหว (Presence System)
+  useEffect(() => {
+    if (!loggedInUser) return;
+
+    // A. เมื่อเปิดแอปมา ให้เซ็ตสถานะตัวเองเป็น Online ทันที
+    const userRef = doc(db, 'presence', loggedInUser.name);
+    setDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() }, { merge: true });
+
+    // B. คำสั่งสั่งเสีย: เมื่อปิดแท็บ หรือปิดเบราว์เซอร์ ให้เปลี่ยนเป็น Offline
+    const handleBeforeUnload = () => {
+      // ใช้คำสั่งแบบ navigator.sendBeacon หรือ synchronous เพื่อให้ทำงานทันก่อนเว็บปิด
+      updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() });
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    // C. ดึงข้อมูลสถานะ Online ของ "ทุกคน" มาแสดงแบบ Real-time
+    const unsubscribePresence = onSnapshot(collection(db, 'presence'), (snapshot) => {
+      const presenceData: any = {};
+      snapshot.forEach(doc => {
+        presenceData[doc.id] = doc.data();
+      });
+      setUserPresence(presenceData);
+    });
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      updateDoc(userRef, { isOnline: false, lastSeen: serverTimestamp() }); // เผื่อกรณี Log out ปกติ
+      unsubscribePresence();
+    };
+  }, [loggedInUser]);
+
+  // โหลดคิวงาน
   useEffect(() => {
     if (!loggedInUser) return;
     const q = query(collection(db, 'tasks'), orderBy('lastActivity', 'desc'));
@@ -64,6 +99,7 @@ export default function App() {
     return () => unsubscribe();
   }, [loggedInUser]);
 
+  // โหลดแชท
   useEffect(() => {
     if (!selectedTaskId) return;
     const q = query(collection(db, 'tasks', selectedTaskId, 'chats'), orderBy('timestamp', 'asc'));
@@ -89,9 +125,18 @@ export default function App() {
     setIsLoading(false);
   };
 
+  // 🟢 ฟังก์ชัน Log Out แบบสมบูรณ์ (เปลี่ยนสถานะตัวเองเป็น Offline ก่อนเคลียร์กุญแจ)
+  const handleLogout = async () => {
+    if (loggedInUser) {
+      await updateDoc(doc(db, 'presence', loggedInUser.name), { isOnline: false, lastSeen: serverTimestamp() });
+    }
+    localStorage.removeItem('stp_user_session'); 
+    setLoggedInUser(null);
+  };
+
   const handleCreateTask = async (e: any) => {
     e.preventDefault();
-    if (!newTask.topic || newTask.relatedPersons.length === 0 || !newTask.dueDate) return showToast('กรุณากรอก หัวข้อเรื่อง, วันที่กำหนดเสร็จ และเลือกผู้เกี่ยวข้อง');
+    if (!newTask.topic || newTask.relatedPersons.length === 0 || !newTask.dueDate) return showToast('กรุณากรอกข้อมูลให้ครบถ้วน');
     setIsLoading(true);
     try {
       const initialIndividualStatus: any = {};
@@ -136,7 +181,6 @@ export default function App() {
     
     await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: loggedInUser.name, text: txt, fileUrl, fileName, timestamp: serverTimestamp(), isSystem: false });
     await updateDoc(doc(db, 'tasks', selectedTaskId), { lastActivity: serverTimestamp() });
-    
     setIsUploading(false);
   };
 
@@ -147,15 +191,10 @@ export default function App() {
     
     const myNextStep = myCurrentStep + 1;
     const newIndividualStatus = { ...selectedTask.individualStatus, [loggedInUser.name]: myNextStep };
-    
     const allSteps = selectedTask.relatedPersons.map((p: string) => newIndividualStatus[p] || 0);
     const globalMinStep = Math.min(...allSteps);
 
-    const updates: any = { 
-      individualStatus: newIndividualStatus,
-      lastActivity: serverTimestamp()
-    };
-    
+    const updates: any = { individualStatus: newIndividualStatus, lastActivity: serverTimestamp() };
     let globalStepChanged = false;
     if (globalMinStep > selectedTask.currentStep) {
       updates.currentStep = globalMinStep;
@@ -166,48 +205,25 @@ export default function App() {
     await updateDoc(doc(db, 'tasks', selectedTaskId), updates);
     await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `👤 ${loggedInUser.name} เปลี่ยนสถานะส่วนตัวเป็น: ${steps[myNextStep]}`, timestamp: serverTimestamp(), isSystem: true });
     
-    if (globalStepChanged) {
-      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `🌟 [สถานะงานหลัก] ทุกคนดำเนินการถึงขั้น: ${steps[globalMinStep]}`, timestamp: serverTimestamp(), isSystem: true });
-      showToast(`สถานะหลักของงานถูกเลื่อนเป็น "${steps[globalMinStep]}" แล้ว`);
-    } else {
-      showToast(`อัปเดตสถานะส่วนตัวของคุณเรียบร้อย`);
-    }
+    if (globalStepChanged) showToast(`สถานะหลักถูกเลื่อนเป็น "${steps[globalMinStep]}" แล้ว`);
+    else showToast(`อัปเดตสถานะส่วนตัวของคุณเรียบร้อย`);
   };
 
   const reportIssue = async () => {
     if (!selectedTask || !selectedTaskId) return;
     await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: true, lastActivity: serverTimestamp() });
-    await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `⚠️ ${loggedInUser.name} แจ้งว่างานนี้ "ติดปัญหา"`, timestamp: serverTimestamp(), isSystem: true });
-  };
-
-  // 🟢 อัปเกรด: ใช้หน้าต่างยืนยันแทน window.confirm
-  const revertStep = async (targetStep: number) => {
-    if (!selectedTask || !selectedTaskId || targetStep >= selectedTask.currentStep) return;
-    
-    setConfirmModal({
-      isOpen: true,
-      title: 'ย้อนสถานะงาน',
-      text: `คุณแน่ใจหรือไม่ว่าต้องการดึงสถานะงานหลักกลับไปที่: "${steps[targetStep]}" ?`,
-      type: 'warning',
-      onConfirm: async () => {
-        await updateDoc(doc(db, 'tasks', selectedTaskId), { currentStep: targetStep, hasIssue: false });
-        await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `⏪ ${loggedInUser.name} ดึงสถานะงานกลับไปที่: ${steps[targetStep]}`, timestamp: serverTimestamp(), isSystem: true });
-      }
-    });
+    await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `⚠️ ${loggedInUser.name} แจ้งว่างานติดปัญหา`, timestamp: serverTimestamp(), isSystem: true });
   };
 
   const archiveTask = async () => {
     if (!selectedTask || !selectedTaskId) return;
-    if (selectedTask.requester !== loggedInUser.name) return showToast('❌ ผู้สั่งงานเท่านั้นที่สามารถปิดงานนี้ได้');
+    if (selectedTask.requester !== loggedInUser.name) return showToast('❌ ผู้สั่งงานเท่านั้นที่ปิดงานนี้ได้');
     
     setConfirmModal({
-      isOpen: true,
-      title: 'ปิดจ๊อบถาวร',
-      text: 'คุณกำลังจะปิดงานนี้และนำออกจากคิวงานของทุกคน คุณแน่ใจหรือไม่?',
-      type: 'info',
+      isOpen: true, title: 'ปิดจ๊อบถาวร', text: 'คุณกำลังจะปิดงานนี้และนำออกจากคิวงาน ยืนยันหรือไม่?', type: 'info',
       onConfirm: async () => {
         await updateDoc(doc(db, 'tasks', selectedTaskId), { isArchived: true, lastActivity: serverTimestamp() });
-        await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `📁 ${loggedInUser.name} ปิดจ๊อบและเก็บงานนี้เข้าคลังประวัติแล้ว`, timestamp: serverTimestamp(), isSystem: true });
+        await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `📁 ${loggedInUser.name} ปิดจ๊อบถาวร`, timestamp: serverTimestamp(), isSystem: true });
         setSelectedTaskId(null);
         showToast('📁 เก็บงานเข้าคลังประวัติเรียบร้อย');
       }
@@ -216,19 +232,15 @@ export default function App() {
 
   const deleteTask = async (taskId: string, e: any) => {
     e.stopPropagation(); 
-    if (loggedInUser.role !== 'Admin') return showToast('❌ คุณไม่มีสิทธิ์ลบงาน');
-    
+    if (loggedInUser.role !== 'Admin') return showToast('❌ ไม่มีสิทธิ์ลบงาน');
     setConfirmModal({
-      isOpen: true,
-      title: 'ลบงานถาวร',
-      text: '🚨 คำเตือน: คุณกำลังจะลบงานนี้พร้อมประวัติแชททั้งหมดออกจากฐานข้อมูลถาวร (ไม่สามารถกู้คืนได้) ยืนยันการลบหรือไม่?',
-      type: 'danger',
+      isOpen: true, title: 'ลบงานถาวร', text: '🚨 คุณกำลังจะลบงานนี้ถาวร ยืนยันการลบหรือไม่?', type: 'danger',
       onConfirm: async () => {
         try {
           await deleteDoc(doc(db, 'tasks', taskId));
           if (selectedTaskId === taskId) setSelectedTaskId(null);
-          showToast('🗑️ ลบงานออกจากระบบถาวรแล้ว');
-        } catch { showToast('❌ เกิดข้อผิดพลาดในการลบงาน'); }
+          showToast('🗑️ ลบงานถาวรแล้ว');
+        } catch { showToast('❌ ลบงานล้มเหลว'); }
       }
     });
   };
@@ -248,24 +260,36 @@ export default function App() {
     );
   }
 
-  const visibleTasks = tasks.filter(t => 
-    !t.isArchived && 
-    (t.topic.toLowerCase().includes(searchQuery.toLowerCase()) || (t.documentNo && t.documentNo.toLowerCase().includes(searchQuery.toLowerCase())))
-  );
+  const visibleTasks = tasks.filter(t => !t.isArchived && (t.topic.toLowerCase().includes(searchQuery.toLowerCase()) || (t.documentNo && t.documentNo.toLowerCase().includes(searchQuery.toLowerCase()))));
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
-      <header className="bg-blue-900 text-white p-4 shadow-md flex justify-between items-center shrink-0">
+      <header className="bg-blue-900 text-white p-4 shadow-md flex justify-between items-center shrink-0 z-20">
         <h1 className="font-bold">STP Live Task</h1>
         <div className="flex items-center gap-3">
           <div className="text-right"><div className="text-xs font-bold">{loggedInUser.name}</div><div className="text-[10px] text-blue-300">{loggedInUser.role}</div></div>
-          <button onClick={() => { localStorage.removeItem('stp_user_session'); setLoggedInUser(null); }} className="bg-blue-800 p-2 rounded-lg hover:bg-blue-700"><LogOut className="w-4 h-4"/></button>
+          <button onClick={handleLogout} className="bg-blue-800 p-2 rounded-lg hover:bg-blue-700"><LogOut className="w-4 h-4"/></button>
         </div>
       </header>
 
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel: Task Queue */}
         <div className={`w-full md:w-1/3 bg-white border-r flex flex-col ${selectedTaskId ? 'hidden md:flex' : 'flex'}`}>
+          
+          {/* 🟢 3. แถบแสดงสถานะทีมงาน (Status Bar) */}
+          <div className="bg-slate-800 text-white p-2 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700 custom-scrollbar">
+            <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-1 shrink-0">ทีมงาน:</div>
+            {settings.users.map((u: string) => {
+              const isOnline = userPresence[u]?.isOnline;
+              return (
+                <div key={u} className="flex items-center gap-1.5 shrink-0 bg-slate-700/50 px-2 py-1 rounded-full border border-slate-600">
+                  <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-slate-500'}`}></span>
+                  <span className={`text-[10px] font-bold ${isOnline ? 'text-white' : 'text-slate-400'}`}>{u}</span>
+                </div>
+              );
+            })}
+          </div>
+
           <div className="p-4 bg-slate-50 border-b">
             <div className="flex justify-between items-center mb-3">
               <h2 className="font-bold text-slate-700">ห้องสนทนางาน ({visibleTasks.length})</h2>
@@ -313,7 +337,6 @@ export default function App() {
                 </div>
                 <div className="flex gap-2">
                    <button onClick={reportIssue} disabled={selectedTask.hasIssue || selectedTask.currentStep >= 3} className="px-3 py-1.5 rounded-lg text-xs font-bold border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-50">แจ้งปัญหา</button>
-                   
                    {selectedTask.requester === loggedInUser.name && (
                      <button onClick={archiveTask} className="bg-slate-800 text-white px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 hover:bg-black"><Archive className="w-3 h-3"/> ปิดถาวร</button>
                    )}
@@ -398,12 +421,10 @@ export default function App() {
               <h2 className="font-black text-xl text-slate-800">สร้างกลุ่มงานใหม่</h2>
               <button type="button" className="p-1.5 hover:bg-slate-100 rounded-xl text-slate-400" onClick={() => setIsModalOpen(false)}><X className="w-5 h-5"/></button>
             </div>
-            
             <div>
               <label className="text-[10px] font-bold text-slate-400 uppercase mb-1 block">หัวข้อเรื่อง / งาน (Topic)</label>
               <input type="text" placeholder="พิมพ์ชื่องานสั้นๆ ที่เข้าใจง่าย..." className="w-full p-3 border border-slate-200 rounded-xl text-sm font-bold text-blue-800 outline-none focus:ring-2 focus:ring-blue-500" value={newTask.topic} onChange={e => setNewTask({...newTask, topic: e.target.value})} autoFocus/>
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-[10px] font-black text-indigo-500 uppercase mb-1 block">📅 วันที่คาดว่างานจะเสร็จ</label>
@@ -414,9 +435,7 @@ export default function App() {
                 <input type="text" placeholder="ใบส่งของ / บิล" className="w-full p-2.5 border border-slate-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500" value={newTask.documentNo} onChange={e => setNewTask({...newTask, documentNo: e.target.value})}/>
               </div>
             </div>
-
             <textarea placeholder="รายละเอียดเพิ่มเติม อธิบายโจทย์ให้ผู้เกี่ยวข้องทราบ..." className="w-full p-3 border border-slate-200 rounded-xl text-sm h-20 resize-none outline-none focus:ring-2 focus:ring-blue-500" value={newTask.details} onChange={e => setNewTask({...newTask, details: e.target.value})}/>
-            
             <div>
               <label className="text-[10px] font-black text-blue-600 uppercase mb-2 block">👥 เลือกผู้เกี่ยวข้องในงานนี้</label>
               <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border-2 border-blue-100 p-2.5 rounded-xl bg-blue-50/50">
@@ -427,7 +446,6 @@ export default function App() {
                 ))}
               </div>
             </div>
-            
             <button type="submit" disabled={isLoading} className="w-full bg-blue-600 text-white p-3.5 rounded-xl font-bold shadow-lg hover:bg-blue-700 disabled:opacity-50 flex justify-center items-center gap-2">
               {isLoading ? <Loader2 className="w-5 h-5 animate-spin"/> : <Send className="w-5 h-5"/>} สร้างห้องสนทนางาน
             </button>
@@ -435,7 +453,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 🟢 ส่วนของ Custom Confirm Modal ที่สร้างใหม่ */}
       {confirmModal.isOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[100] animate-in fade-in">
           <div className="bg-white rounded-3xl w-full max-w-sm p-6 shadow-2xl">
@@ -446,20 +463,12 @@ export default function App() {
             </h3>
             <p className="text-sm text-slate-600 mb-6 leading-relaxed">{confirmModal.text}</p>
             <div className="flex justify-end gap-3">
-              <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-colors text-sm">
-                ยกเลิก
-              </button>
-              <button 
-                onClick={() => { confirmModal.onConfirm(); setConfirmModal({ ...confirmModal, isOpen: false }); }} 
-                className={`px-5 py-2.5 text-white font-bold rounded-xl shadow-md transition-colors text-sm ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}
-              >
-                ยืนยัน
-              </button>
+              <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })} className="px-4 py-2.5 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-colors text-sm">ยกเลิก</button>
+              <button onClick={() => { confirmModal.onConfirm(); setConfirmModal({ ...confirmModal, isOpen: false }); }} className={`px-5 py-2.5 text-white font-bold rounded-xl shadow-md transition-colors text-sm ${confirmModal.type === 'danger' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>ยืนยัน</button>
             </div>
           </div>
         </div>
       )}
-
       {toastMsg && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full text-sm font-bold shadow-2xl z-[100] flex items-center gap-2 animate-in fade-in slide-in-from-bottom-5 border border-slate-700"><CheckCircle2 className="w-4 h-4 text-green-400"/> {toastMsg}</div>}
     </div>
   );
