@@ -74,7 +74,7 @@ export default function App() {
   const [showOnlyPending, setShowOnlyPending] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(20);
 
-  // โหลด Scripts สำหรับ QR Code และ PDF-lib
+  // โหลด Scripts สำหรับ QR Code และ PDF-lib (เอา JSZip ออกถาวร)
   useEffect(() => {
     const loadScript = (src: string) => {
       if (document.querySelector(`script[src="${src}"]`)) return;
@@ -82,7 +82,6 @@ export default function App() {
     };
     loadScript('https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js');
     loadScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js');
-    loadScript('https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js');
   }, []);
 
   useEffect(() => {
@@ -181,6 +180,7 @@ export default function App() {
     return canvas.toDataURL('image/png');
   };
 
+  // 🟢 ลอจิกเจาะจง: สร้าง PDF ไฟล์เดียว และแปะตราหน้าสุดท้ายเสมอ
   const processQrBatchFiles = async () => {
     if (!loggedInUser) return showToast("❌ ปฏิเสธการเข้าถึง กรุณาล็อกอิน");
     if (batchFiles.length === 0 || !expiryDate || batchFiles.some(f => !f.amount || f.amount <= 0) || batchFiles.some(f => f.error)) {
@@ -193,44 +193,55 @@ export default function App() {
 
     setIsQrProcessing(true);
     try {
-      const zip = new (window as any).JSZip();
+      const { PDFDocument } = (window as any).PDFLib;
+      const masterPdf = await PDFDocument.create(); // สร้างแฟ้มเปล่า 1 เล่ม
+
       for (const item of batchFiles) {
         const payload = generatePromptPayPayload(activeAcc.promptpay, item.amount);
         const qrBase64Url = await (window as any).QRCode.toDataURL(payload, { width: 400, margin: 1, color: { dark: '#000000', light: '#ffffff' }});
         const stampDataUrl = await createStampImage(qrBase64Url, item.amount, item.refNo, targetTime, activeAcc);
         
-        let fileContent; let fileExt;
         if (item.file) {
+          // โหลด PDF ต้นฉบับ
           const pdfBytes = await item.file.arrayBuffer(); 
-          const pdfDoc = await (window as any).PDFLib.PDFDocument.load(pdfBytes);
-          const pngImage = await pdfDoc.embedPng(stampDataUrl);
+          const docPdf = await PDFDocument.load(pdfBytes);
           
-          // 🟢 จุดแก้ไข: ตรวจสอบจำนวนหน้า และบังคับประทับตราที่หน้าสุดท้ายเสมอ
-          const pages = pdfDoc.getPages();
+          // ดึงหน้าสุดท้ายออกมาประทับตรา
+          const pages = docPdf.getPages();
           const lastPage = pages[pages.length - 1]; 
-          
-          lastPage.drawImage(pngImage, { x: 30, y: 30, width: 50 * 2.83465, height: 25 * 2.83465 });
-          fileContent = await pdfDoc.save(); fileExt = 'pdf';
+          const stampPngImageForDoc = await docPdf.embedPng(stampDataUrl);
+          lastPage.drawImage(stampPngImageForDoc, { x: 30, y: 30, width: 50 * 2.83465, height: 25 * 2.83465 });
+
+          // คัดลอกทุกหน้าจากเอกสารไปใส่แฟ้มหลัก
+          const copiedPages = await masterPdf.copyPages(docPdf, docPdf.getPageIndices());
+          copiedPages.forEach((page: any) => masterPdf.addPage(page));
         } else {
-          const response = await fetch(stampDataUrl); fileContent = await response.arrayBuffer(); fileExt = 'png';
+          // กรณีสร้างรูปอย่างเดียว จะถูกแทรกเป็นหน้า A4 เปล่าๆ เข้าไปในแฟ้มหลัก
+          const stampPngImageForMaster = await masterPdf.embedPng(stampDataUrl); 
+          const blankPage = masterPdf.addPage([595.28, 841.89]); // ขนาด A4
+          blankPage.drawImage(stampPngImageForMaster, { x: 50, y: 841.89 - 250, width: 400, height: 200 }); 
         }
 
-        const safeRef = item.refNo.replace(/[^a-zA-Z0-9_-]/g, '_');
-        const filename = `${safeRef}_QR.${fileExt}`;
-        zip.file(filename, fileContent);
-        
         await addDoc(collection(db, 'qr_bills'), {
           refNo: item.refNo, amount: parseFloat(item.amount), bankName: activeAcc.bankName, accountNo: activeAcc.accountNo, 
           promptpay: activeAcc.promptpay, expireAt: targetTime, status: 'PENDING', qrPayload: payload, createdAt: serverTimestamp(), paidAt: null
         });
       }
       
-      const content = batchFiles.length === 1 ? await zip.file(Object.keys(zip.files)[0]).async("blob") : await zip.generateAsync({ type: "blob" });
-      const link = document.createElement('a'); link.href = URL.createObjectURL(content); 
-      link.download = batchFiles.length === 1 ? Object.keys(zip.files)[0] : `Batch_Bills_QR_${new Date().toISOString().split('T')[0]}.zip`; 
+      // บันทึกและดาวน์โหลดเป็น PDF ทันที
+      const pdfBytes = await masterPdf.save();
+      const blob = new Blob([pdfBytes], { type: "application/pdf" });
+      const link = document.createElement('a'); 
+      link.href = URL.createObjectURL(blob); 
+      link.download = batchFiles.length === 1 ? `${batchFiles[0].refNo.replace(/[^a-zA-Z0-9_-]/g, '_')}_QR.pdf` : `STP_Merged_Bills_${new Date().toISOString().split('T')[0]}.pdf`; 
       link.click();
-      showToast(`✅ สร้าง QR สำเร็จ ${batchFiles.length} รายการ!`); setBatchFiles([]);
-    } catch (err) { showToast("❌ เกิดข้อผิดพลาดตอนสร้าง PDF/QR"); } 
+      
+      showToast(`✅ สร้างและรวมเป็น PDF สำเร็จ!`); 
+      setBatchFiles([]);
+    } catch (err) { 
+      console.error(err);
+      showToast("❌ เกิดข้อผิดพลาดตอนสร้าง PDF"); 
+    } 
     finally { setIsQrProcessing(false); }
   };
 
@@ -784,7 +795,7 @@ export default function App() {
                       </div>
                       <div className="p-4 sm:p-5 bg-white border-t border-slate-100 rounded-b-2xl">
                         <button onClick={processQrBatchFiles} disabled={isQrProcessing || batchFiles.length===0 || !loggedInUser} className="w-full py-4 text-white text-sm font-black rounded-xl uppercase tracking-widest transition-all bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed shadow-md">
-                          {!loggedInUser ? 'CONNECTING...' : isQrProcessing ? 'PROCESSING...' : `ENGAGE & DOWNLOAD ZIP`}
+                          {!loggedInUser ? 'CONNECTING...' : isQrProcessing ? 'MERGING PDFs...' : `ENGAGE & DOWNLOAD 1 PDF`}
                         </button>
                       </div>
                     </div>
