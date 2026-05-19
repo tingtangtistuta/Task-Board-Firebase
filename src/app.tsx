@@ -204,7 +204,12 @@ export default function App() {
           const pdfBytes = await item.file.arrayBuffer(); 
           const pdfDoc = await (window as any).PDFLib.PDFDocument.load(pdfBytes);
           const pngImage = await pdfDoc.embedPng(stampDataUrl);
-          pdfDoc.getPages()[0].drawImage(pngImage, { x: 30, y: 30, width: 50 * 2.83465, height: 25 * 2.83465 });
+          
+          // 🟢 จุดแก้ไข: ตรวจสอบจำนวนหน้า และบังคับประทับตราที่หน้าสุดท้ายเสมอ
+          const pages = pdfDoc.getPages();
+          const lastPage = pages[pages.length - 1]; 
+          
+          lastPage.drawImage(pngImage, { x: 30, y: 30, width: 50 * 2.83465, height: 25 * 2.83465 });
           fileContent = await pdfDoc.save(); fileExt = 'pdf';
         } else {
           const response = await fetch(stampDataUrl); fileContent = await response.arrayBuffer(); fileExt = 'png';
@@ -451,7 +456,6 @@ export default function App() {
             <div className="text-[10px] font-black uppercase text-blue-400 tracking-widest">{loggedInUser?.role || 'User'}</div>
             <div className="text-sm font-bold text-white">{loggedInUser?.name || ''}</div>
           </div>
-          {/* 🟢 ปุ่มเรียกใช้งานแอป QR Code */}
           <button onClick={() => setIsQrModalOpen(true)} className="bg-blue-600 border border-blue-500 p-2.5 rounded-xl transition-all text-white shadow-[0_0_10px_rgba(37,99,235,0.5)] hover:bg-blue-500 group relative">
             <QrCode className="w-5 h-5"/>
             <span className="absolute -bottom-6 right-0 bg-black/80 text-white text-[9px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">QR Maker</span>
@@ -464,7 +468,6 @@ export default function App() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* --- ส่วนซ้าย: คิวงาน --- */}
         <div className={`w-full md:w-1/3 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-colors ${selectedTaskId ? 'hidden md:flex' : 'flex'}`}>
           <div className="bg-slate-800 dark:bg-black text-white p-2.5 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700 dark:border-slate-800 no-scrollbar transition-colors">
             <div className="text-[9px] font-black text-slate-400 dark:text-slate-600 uppercase tracking-widest pl-2 shrink-0">DRIVER STATUS:</div>
@@ -536,7 +539,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* --- ส่วนขวา: แชทและรายละเอียด --- */}
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-xl z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md transition-colors">
@@ -671,7 +673,6 @@ export default function App() {
       {isQrModalOpen && (
         <div className="fixed inset-0 z-[400] bg-slate-900/80 dark:bg-black/90 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
           <div className="bg-slate-50 w-full max-w-5xl h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col relative animate-in zoom-in-95 duration-200">
-            {/* ปรับธีมของ QR Code ให้สว่างสะอาดตาตาม UI เดิมเสมอ */}
             <button className="absolute top-4 right-4 z-50 p-2 bg-white rounded-full shadow-md text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all" onClick={() => setIsQrModalOpen(false)}><X className="w-5 h-5"/></button>
             
             <div className="flex-1 overflow-y-auto p-4 sm:p-8 font-sans text-slate-800 custom-scrollbar">
@@ -849,7 +850,7 @@ export default function App() {
 
       {/* --- แจ้งเตือน Notification ซ้อนทับให้โผล่มาหน้าสุดเสมอ --- */}
       {toastMsg && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-blue-600 text-white px-8 py-4 rounded-xl font-black text-xs shadow-2xl dark:shadow-[0_0_30px_rgba(37,99,235,0.6)] z-[500] animate-in slide-in-from-bottom-10 flex items-center gap-3 tracking-widest italic uppercase"><Zap className="w-4 h-4 text-white"/> {toastMsg}</div>}
-      {isAddPersonModalOpen && <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[100]"></div> /* สำหรับโครงสร้างอื่นๆ ของ TaskBoard ที่ผมเก็บไว้ครบถ้วนเหมือนเดิม */}
+      {isAddPersonModalOpen && <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[100]"></div>}
     </div>
   );
 }
