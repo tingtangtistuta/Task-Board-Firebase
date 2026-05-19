@@ -74,7 +74,7 @@ export default function App() {
   const [showOnlyPending, setShowOnlyPending] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(20);
 
-  // โหลด Scripts สำหรับ QR Code และ PDF-lib (เอา JSZip ออกถาวร)
+  // 🟢 โหลด Scripts (เพิ่ม PDF.js สำหรับดึงตัวอักษรอัตโนมัติ)
   useEffect(() => {
     const loadScript = (src: string) => {
       if (document.querySelector(`script[src="${src}"]`)) return;
@@ -82,6 +82,7 @@ export default function App() {
     };
     loadScript('https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js');
     loadScript('https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js');
+    loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js');
   }, []);
 
   useEffect(() => {
@@ -150,16 +151,88 @@ export default function App() {
     if (hasChanges) setBatchFiles(updatedBatch);
   }, [batchFiles, historyLogs]);
 
-  const getActiveAccount = () => isCustomBank ? customBank : MAIN_ACCOUNT;
-  const handleFileUpload = (e: any) => {
-    const files = Array.from(e.target.files);
-    const newItems = files.map((f: any) => ({ id: Math.random().toString(36).substr(2, 9), file: f, refNo: f.name.replace(/\.pdf$/i, ''), amount: '', error: null }));
-    setBatchFiles(prev => [...prev, ...newItems]); e.target.value = null;
+  // 🟢 ฟังก์ชันดึงยอดเงินอัตโนมัติด้วย PDF.js
+  const extractAmountFromPDF = async (file: File) => {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      let pdfjsLib = (window as any)['pdfjs-dist/build/pdf'] || (window as any).pdfjsLib;
+      
+      // ถ้าระบบเพิ่งโหลด ให้รอนิดนึง
+      if (!pdfjsLib) {
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 200));
+          pdfjsLib = (window as any)['pdfjs-dist/build/pdf'] || (window as any).pdfjsLib;
+          if (pdfjsLib) break;
+        }
+      }
+      
+      if (!pdfjsLib) return '';
+
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
+      const pdf = await loadingTask.promise;
+      
+      // ดึงตัวหนังสือจาก "หน้าสุดท้าย"
+      const lastPageNum = pdf.numPages;
+      const page = await pdf.getPage(lastPageNum);
+      const textContent = await page.getTextContent();
+      
+      // นำตัวหนังสือมาต่อกัน และลบเว้นวรรคทิ้งทั้งหมด (แก้ปัญหา PDF ตัดคำ)
+      const textStr = textContent.items.map((item: any) => item.str).join('');
+      const noSpaceStr = textStr.replace(/\s+/g, '');
+      
+      // ลอจิกนักสืบ: หาคำว่า "รวม/Total" และกวาดเอาตัวเลขทศนิยม 2 ตำแหน่ง
+      const regex = /รวม\/Total([\d,]+\.\d{2})/gi;
+      let match;
+      let finalAmount = '';
+      
+      // เผื่อมีหลายอันในหน้าเดียว ให้เอาอัน "ล่าสุด"
+      while ((match = regex.exec(noSpaceStr)) !== null) {
+        finalAmount = match[1].replace(/,/g, ''); // ดึงคอมม่า (,) ออก
+      }
+      
+      return finalAmount;
+    } catch (e) {
+      console.error("PDF Extraction Error:", e);
+      return '';
+    }
   };
+
+  const getActiveAccount = () => isCustomBank ? customBank : MAIN_ACCOUNT;
+  
+  // 🟢 อัปเกรด handleFileUpload ให้รองรับ Auto Extract
+  const handleFileUpload = async (e: any) => {
+    const files = Array.from(e.target.files);
+    
+    // โหลดลงตารางก่อนทันที เพื่อความสมูทของ UI
+    const newItems = files.map((f: any) => ({ 
+      id: Math.random().toString(36).substr(2, 9), 
+      file: f, 
+      refNo: f.name.replace(/\.pdf$/i, ''), 
+      amount: '', 
+      error: null,
+      isExtracting: true // เพิ่มสถานะกำลังดึงข้อมูล
+    }));
+    setBatchFiles(prev => [...prev, ...newItems]); 
+    e.target.value = null;
+
+    // ทยอยแกะตัวเลขออกมาแล้วอัปเดตลงช่อง
+    for (const item of newItems) {
+      const extractedAmount = await extractAmountFromPDF(item.file);
+      setBatchFiles(prev => prev.map(p => 
+        p.id === item.id 
+          ? { ...p, amount: extractedAmount, isExtracting: false } 
+          : p
+      ));
+    }
+  };
+
   const handleManualAdd = () => {
-    const newItem = { id: Math.random().toString(36).substr(2, 9), file: null, refNo: `INV${new Date().getTime().toString().slice(-4)}`, amount: '', error: null };
+    const newItem = { id: Math.random().toString(36).substr(2, 9), file: null, refNo: `INV${new Date().getTime().toString().slice(-4)}`, amount: '', error: null, isExtracting: false };
     setBatchFiles(prev => [...prev, newItem]);
   };
+  
   const removeBatchItem = (id: string) => setBatchFiles(prev => prev.filter(item => item.id !== id));
   const updateBatchItem = (id: string, field: string, value: any) => setBatchFiles(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
 
@@ -175,12 +248,15 @@ export default function App() {
     ctx.font = '24px sans-serif'; ctx.fillText(`${activeAcc.bankName} : ${activeAcc.accountNo}`, margin, 100, canvas.width - (margin * 2));
     ctx.font = '24px sans-serif'; ctx.fillText(`Ref. No: ${refNo || '-'}`, margin, 135, canvas.width - (margin * 2));
     const textRightX = qrX + qrSize + 24, maxRightWidth = canvas.width - textRightX - margin;
-    ctx.font = 'bold 52px sans-serif'; ctx.fillText(`ยอดชำระ: ${parseFloat(amt.toString()).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`, textRightX, 235, maxRightWidth);
+    
+    // ตรวจสอบว่ามีค่า amt ให้แสดงผลไหม
+    const displayAmt = (amt && !isNaN(amt)) ? parseFloat(amt.toString()).toLocaleString('th-TH', { minimumFractionDigits: 2 }) : '0.00';
+    ctx.font = 'bold 52px sans-serif'; ctx.fillText(`ยอดชำระ: ${displayAmt}`, textRightX, 235, maxRightWidth);
+    
     if (targetTime) { ctx.font = 'bold 26px sans-serif'; ctx.fillText(`หมดอายุ: ${formatThaiDateTime(targetTime)}`, textRightX, 335, maxRightWidth); }
     return canvas.toDataURL('image/png');
   };
 
-  // 🟢 ลอจิกเจาะจง: สร้าง PDF ไฟล์เดียว และแปะตราหน้าสุดท้ายเสมอ
   const processQrBatchFiles = async () => {
     if (!loggedInUser) return showToast("❌ ปฏิเสธการเข้าถึง กรุณาล็อกอิน");
     if (batchFiles.length === 0 || !expiryDate || batchFiles.some(f => !f.amount || f.amount <= 0) || batchFiles.some(f => f.error)) {
@@ -194,7 +270,7 @@ export default function App() {
     setIsQrProcessing(true);
     try {
       const { PDFDocument } = (window as any).PDFLib;
-      const masterPdf = await PDFDocument.create(); // สร้างแฟ้มเปล่า 1 เล่ม
+      const masterPdf = await PDFDocument.create();
 
       for (const item of batchFiles) {
         const payload = generatePromptPayPayload(activeAcc.promptpay, item.amount);
@@ -202,23 +278,19 @@ export default function App() {
         const stampDataUrl = await createStampImage(qrBase64Url, item.amount, item.refNo, targetTime, activeAcc);
         
         if (item.file) {
-          // โหลด PDF ต้นฉบับ
           const pdfBytes = await item.file.arrayBuffer(); 
           const docPdf = await PDFDocument.load(pdfBytes);
           
-          // ดึงหน้าสุดท้ายออกมาประทับตรา
           const pages = docPdf.getPages();
           const lastPage = pages[pages.length - 1]; 
           const stampPngImageForDoc = await docPdf.embedPng(stampDataUrl);
           lastPage.drawImage(stampPngImageForDoc, { x: 30, y: 30, width: 50 * 2.83465, height: 25 * 2.83465 });
 
-          // คัดลอกทุกหน้าจากเอกสารไปใส่แฟ้มหลัก
           const copiedPages = await masterPdf.copyPages(docPdf, docPdf.getPageIndices());
           copiedPages.forEach((page: any) => masterPdf.addPage(page));
         } else {
-          // กรณีสร้างรูปอย่างเดียว จะถูกแทรกเป็นหน้า A4 เปล่าๆ เข้าไปในแฟ้มหลัก
           const stampPngImageForMaster = await masterPdf.embedPng(stampDataUrl); 
-          const blankPage = masterPdf.addPage([595.28, 841.89]); // ขนาด A4
+          const blankPage = masterPdf.addPage([595.28, 841.89]); 
           blankPage.drawImage(stampPngImageForMaster, { x: 50, y: 841.89 - 250, width: 400, height: 200 }); 
         }
 
@@ -228,7 +300,6 @@ export default function App() {
         });
       }
       
-      // บันทึกและดาวน์โหลดเป็น PDF ทันที
       const pdfBytes = await masterPdf.save();
       const blob = new Blob([pdfBytes], { type: "application/pdf" });
       const link = document.createElement('a'); 
@@ -270,7 +341,7 @@ export default function App() {
   const displayedLogs = filteredLogs.slice(0, displayLimit);
   const totalPending = historyLogs.filter(l => l.status === 'PENDING').length;
 
-  // --- Task Board Logic (เหมือนเดิมทุกอย่าง) ---
+  // --- Task Board Logic ---
   useEffect(() => {
     if (selectedTaskId && loggedInUser?.name) { updateDoc(doc(db, 'tasks', selectedTaskId), { unreadBy: arrayRemove(loggedInUser.name) }).catch(() => {}); }
   }, [selectedTaskId, loggedInUser]);
@@ -680,7 +751,7 @@ export default function App() {
         </div>
       )}
 
-      {/* --- 📦 MODAL พิเศษ: แอประบบสร้าง QR CODE (แยกตัว 100%) --- */}
+      {/* --- 📦 MODAL พิเศษ: แอประบบสร้าง QR CODE --- */}
       {isQrModalOpen && (
         <div className="fixed inset-0 z-[400] bg-slate-900/80 dark:bg-black/90 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4">
           <div className="bg-slate-50 w-full max-w-5xl h-[95vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col relative animate-in zoom-in-95 duration-200">
@@ -785,7 +856,11 @@ export default function App() {
                               </div>
                               <div>
                                 <label className="text-[10px] text-slate-400 font-black uppercase tracking-widest">ยอดเงิน (บาท)</label>
-                                <input type="number" value={item.amount} onChange={(e)=>updateBatchItem(item.id, 'amount', e.target.value)} className="w-full text-right font-black text-xl text-slate-800 bg-transparent border-b border-slate-200 outline-none pb-1 focus:border-blue-500" placeholder="0.00"/>
+                                <div className="relative">
+                                  <input type="number" value={item.amount} onChange={(e)=>updateBatchItem(item.id, 'amount', e.target.value)} disabled={item.isExtracting} className="w-full text-right font-black text-xl text-slate-800 bg-transparent border-b border-slate-200 outline-none pb-1 focus:border-blue-500 disabled:opacity-50" placeholder="0.00"/>
+                                  {/* 🟢 แสดงสถานะกำลังดึงยอดเงิน */}
+                                  {item.isExtracting && <span className="absolute right-0 top-1 text-[10px] text-blue-500 animate-pulse font-bold bg-white px-2">กำลังอ่านยอด...</span>}
+                                </div>
                               </div>
                               {item.error && <p className="text-[10px] text-red-600 font-black tracking-wide bg-red-50 p-2 rounded-lg border border-red-100">{item.error}</p>}
                             </div>
@@ -859,7 +934,6 @@ export default function App() {
         </div>
       )}
 
-      {/* --- แจ้งเตือน Notification ซ้อนทับให้โผล่มาหน้าสุดเสมอ --- */}
       {toastMsg && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-blue-600 text-white px-8 py-4 rounded-xl font-black text-xs shadow-2xl dark:shadow-[0_0_30px_rgba(37,99,235,0.6)] z-[500] animate-in slide-in-from-bottom-10 flex items-center gap-3 tracking-widest italic uppercase"><Zap className="w-4 h-4 text-white"/> {toastMsg}</div>}
       {isAddPersonModalOpen && <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[100]"></div>}
     </div>
