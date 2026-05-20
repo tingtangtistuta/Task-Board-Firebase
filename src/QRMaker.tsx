@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db } from './firebase'; 
-import { CheckCircle2, Clock, Loader2, ArrowLeft, Zap, Filter, X, Eye, Check } from 'lucide-react';
+import { CheckCircle2, Clock, Loader2, Zap, Filter, X, Check } from 'lucide-react';
 
 const MAIN_ACCOUNT = {
   id: 'kbank_main',
@@ -17,6 +17,32 @@ const formatThaiDateTime = (timestamp: any) => {
   return `${date.getDate().toString().padStart(2, '0')}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${(date.getFullYear() + 543).toString().slice(-2)} เวลา ${date.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} น.`;
 };
 
+// 🟢 ฟังก์ชันสร้างรหัส PromptPay มาตรฐาน (พร้อมระบุยอดเงิน)
+const generatePromptPayPayload = (id: string, amount: any) => {
+  const target = id.replace(/[^0-9]/g, '');
+  let idTag = '';
+  if (target.length === 10) idTag = '01' + ('0066' + target.substring(1)).length.toString().padStart(2, '0') + ('0066' + target.substring(1));
+  else if (target.length === 13) idTag = '02' + target.length.toString().padStart(2, '0') + target;
+  else return null;
+
+  const merchantInfo = '0016A000000677010111' + idTag;
+  let payload = '000201' + '010212' + '29' + merchantInfo.length.toString().padStart(2, '0') + merchantInfo + '5802TH' + '5303764'; 
+  if (amount && amount > 0) {
+    const amtStr = parseFloat(amount).toFixed(2).toString();
+    payload += '54' + amtStr.length.toString().padStart(2, '0') + amtStr;
+  }
+  payload += '6304'; 
+  let crc = 0xFFFF;
+  for (let i = 0; i < payload.length; i++) {
+    crc ^= payload.charCodeAt(i) << 8;
+    for (let j = 0; j < 8; j++) {
+      if ((crc & 0x8000) !== 0) crc = (crc << 1) ^ 0x1021;
+      else crc = crc << 1;
+    }
+  }
+  return payload + (crc & 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+};
+
 export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { isOpen: boolean, onClose: () => void, loggedInUser: any, showToast: (msg: string) => void }) {
   const [qrMerchantName] = useState('หจก.แสงไทยพานิช(1992)');
   const [isCustomBank, setIsCustomBank] = useState(false);
@@ -28,10 +54,8 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
   const [isQrProcessing, setIsQrProcessing] = useState(false);
   const [historyLogs, setHistoryLogs] = useState<any[]>([]);
   const [qrActiveTab, setQrActiveTab] = useState('generator');
-  const [selectedCustomerBill, setSelectedCustomerBill] = useState<any>(null);
   const [showOnlyPending, setShowOnlyPending] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(20);
-  const [simQrData, setSimQrData] = useState('');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -53,30 +77,6 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
     });
     return () => unsub();
   }, [loggedInUser, isOpen]);
-
-  useEffect(() => {
-    if (batchFiles.length === 0 || historyLogs.length === 0) return;
-    let hasChanges = false;
-    const updatedBatch = batchFiles.map(item => {
-      const matched = historyLogs.find(log => log.refNo === item.refNo && (log.status === 'PAID' || log.status === 'PAID_PENDING_VERIFY'));
-      const newError = matched ? `⚠️ บิลนี้มีการทำรายการชำระแล้ว` : null;
-      if (item.error !== newError) { hasChanges = true; return { ...item, error: newError }; }
-      return item;
-    });
-    if (hasChanges) setBatchFiles(updatedBatch);
-  }, [batchFiles, historyLogs]);
-
-  useEffect(() => {
-    if (selectedCustomerBill) {
-      const qrcodeLib = (window as any).QRCode;
-      const portalUrl = `${window.location.origin}?bill=${selectedCustomerBill.id}`;
-      if (qrcodeLib) {
-        qrcodeLib.toDataURL(portalUrl, { width: 400, margin: 1, color: { dark: '#000000', light: '#ffffff' } })
-          .then((url: string) => setSimQrData(url))
-          .catch(() => setSimQrData(''));
-      }
-    }
-  }, [selectedCustomerBill]);
 
   const extractAmountFromPDF = async (file: File) => {
     try {
@@ -126,7 +126,7 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
   const removeBatchItem = (id: string) => setBatchFiles(prev => prev.filter(item => item.id !== id));
   const updateBatchItem = (id: string, field: string, value: any) => setBatchFiles(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
 
-  // 🟢 ปรับพิกัดแกน Y ดันขึ้นด้านบน และแก้ปัญหาทศนิยม (toFixed)
+  // 🟢 ฟังก์ชันวาดตราประทับพร้อมแก้จุดบกพร่องเรื่องพื้นที่และทศนิยม
   const createStampImage = async (qrBase64: string, originalAmt: number, netAmt: number, discountPct: number, refNo: string, targetTime: number, activeAcc: any) => {
     const canvas = document.createElement('canvas'); canvas.width = 708; canvas.height = 354; const ctx = canvas.getContext('2d')!;
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -134,17 +134,18 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
     
     const img = new Image(); img.src = qrBase64; await new Promise(res => img.onload = res as any);
     const qrSize = 180; const margin = 10;
-    // วาด QR Code ซ้ายล่าง
+    
+    // วาด QR Code ให้ชิดซ้ายล่าง และดันข้อความขึ้น
     ctx.drawImage(img, margin, canvas.height - qrSize - margin - 20, qrSize, qrSize);
     
     ctx.fillStyle = '#000000'; ctx.textAlign = 'left';
     const textLeftX = margin + qrSize + 20;
     
-    // ขยับข้อความขึ้นด้านบนเพื่อลดพื้นที่ว่าง
     ctx.font = 'bold 30px sans-serif'; ctx.fillText(qrMerchantName, textLeftX, 40);
     ctx.font = '20px sans-serif'; ctx.fillText(`${activeAcc.bankName} : ${activeAcc.accountNo}`, textLeftX, 70);
     ctx.font = '20px sans-serif'; ctx.fillText(`Ref: ${refNo || '-'}`, textLeftX, 95);
     
+    // แก้ปัญหาทศนิยมเกิน 2 ตำแหน่ง
     const displayNetAmt = Number(netAmt.toFixed(2)).toLocaleString('th-TH', { minimumFractionDigits: 2 });
     const displayOrigAmt = Number(originalAmt.toFixed(2)).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
@@ -163,35 +164,17 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
     ctx.fillStyle = '#000000'; ctx.font = 'bold 18px sans-serif';
     ctx.fillText(`หมดอายุรับส่วนลด: ${formatThaiDateTime(targetTime)}`, textLeftX, 255);
     ctx.fillStyle = '#2563eb'; ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`👉 สแกนด้วยกล้องมือถือ/LINE เพื่อชำระเงิน และรับส่วนลด`, textLeftX, 290);
+    ctx.fillText(`👉 สแกนด้วยแอปธนาคารเพื่อชำระเงินทันที`, textLeftX, 290);
     return canvas.toDataURL('image/png');
   };
 
-  // 🟢 ฟังก์ชันเพิ่ม Link Annotation ลงใน PDF (ทำให้รูปกดได้)
-  const addLinkToPdfPage = (docPdf: any, page: any, url: string, rect: number[]) => {
-    const linkAnnotation = docPdf.context.obj({
-      Type: 'Annot',
-      Subtype: 'Link',
-      Rect: rect,
-      Border: [0, 0, 0],
-      A: { Type: 'Action', S: 'URI', URI: url },
-    });
-    let annots = page.node.Annots();
-    if (!annots) {
-      annots = docPdf.context.obj([]);
-      page.node.set(docPdf.context.obj('Annots'), annots);
-    }
-    annots.push(linkAnnotation);
-  };
-
   const processQrBatchFiles = async () => {
-    if (batchFiles.length === 0 || !expiryDate || batchFiles.some(f => !f.amount || f.amount <= 0) || batchFiles.some(f => f.error)) {
+    if (batchFiles.length === 0 || !expiryDate || batchFiles.some(f => !f.amount || f.amount <= 0)) {
       return showToast("⚠️ ข้อมูลไม่ครบถ้วน หรือยอดเงินไม่ถูกต้อง");
     }
     const activeAcc = getActiveAccount();
     if (!activeAcc.promptpay) return showToast("⚠️ ระบุ PromptPay ID ให้ถูกต้อง");
     const targetTime = new Date(`${expiryDate}T${expiryTime}`).getTime();
-    if (targetTime <= new Date().getTime()) return showToast("⚠️ เวลาหมดอายุต้องมากกว่าปัจจุบัน");
 
     setIsQrProcessing(true);
     try {
@@ -202,9 +185,9 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
         const netAmount = discountPercent > 0 ? originalAmount - (originalAmount * discountPercent / 100) : originalAmount;
         const newBillRef = doc(collection(db, 'qr_bills'));
         
-        // 🟢 บังคับให้ QR เป็นลิงก์ URL เข้าสู่หน้า Portal เสมอ (คุมสิทธิ์หมดเวลา)
-        const portalUrl = `${window.location.origin}?bill=${newBillRef.id}`;
-        const qrBase64Url = await (window as any).QRCode.toDataURL(portalUrl, { width: 400, margin: 1 });
+        // 🟢 เปลี่ยนมาใช้ PromptPay Payload โดยตรง สแกนผ่านแอปธนาคารได้ทันที
+        const payload = generatePromptPayPayload(activeAcc.promptpay, netAmount);
+        const qrBase64Url = await (window as any).QRCode.toDataURL(payload, { width: 400, margin: 1 });
         
         const stampDataUrl = await createStampImage(qrBase64Url, originalAmount, netAmount, discountPercent, item.refNo, targetTime, activeAcc);
         
@@ -221,67 +204,56 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
           
           lastPage.drawImage(stampPngImageForDoc, { x: stampX, y: stampY, width: stampWidth, height: stampHeight });
           
-          // 🟢 สั่งฝังลิงก์ทับรูปภาพ ทำให้คลิกผ่านคอมได้
-          addLinkToPdfPage(docPdf, lastPage, portalUrl, [stampX, stampY, stampX + stampWidth, stampY + stampHeight]);
-
           const copiedPages = await masterPdf.copyPages(docPdf, docPdf.getPageIndices());
           copiedPages.forEach((page: any) => masterPdf.addPage(page));
         } else {
           const stampPngImageForMaster = await masterPdf.embedPng(stampDataUrl);
           const blankPage = masterPdf.addPage([595.28, 841.89]);
           blankPage.drawImage(stampPngImageForMaster, { x: 50, y: 841.89 - 250, width: 400, height: 200 });
-          addLinkToPdfPage(masterPdf, blankPage, portalUrl, [50, 841.89 - 250, 50 + 400, (841.89 - 250) + 200]);
         }
         
+        // บันทึกข้อมูลลงฐานข้อมูล Firebase เพื่อเก็บประวัติ
         await setDoc(newBillRef, { 
           refNo: item.refNo, originalAmount: originalAmount, discountPercent: discountPercent, amount: netAmount, 
           bankName: activeAcc.bankName, accountNo: activeAcc.accountNo, promptpay: activeAcc.promptpay, expireAt: targetTime, status: 'PENDING', 
-          createdAt: serverTimestamp(), paidAt: null, slipUrl: null, uploadedAt: null
+          createdAt: serverTimestamp(), paidAt: null
         });
       }
       const pdfBytes = await masterPdf.save();
       const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" })); 
       link.download = batchFiles.length === 1 ? `${batchFiles[0].refNo}_QR.pdf` : `STP_Merged_Bills_${new Date().toISOString().split('T')[0]}.pdf`; 
       link.click();
-      showToast("✅ สร้างไฟล์และจัดเก็บข้อมูลเรียบร้อย!");
+      showToast("✅ สร้างไฟล์ PDF พร้อม QR รับเงินเรียบร้อย!");
       setBatchFiles([]);
     } catch (err) {
       showToast("❌ เกิดข้อผิดพลาดตอนสร้าง PDF");
     } finally { setIsQrProcessing(false); }
   };
 
+  // แอดมินสามารถกดเปลี่ยนสถานะเป็นชำระแล้วได้จากหน้าประวัติ
   const handleApproveSlip = async (billId: string) => {
     try {
       await updateDoc(doc(db, 'qr_bills', billId), { status: 'PAID', paidAt: Date.now() });
-      setSelectedCustomerBill(null);
-      showToast('✅ ยืนยันยอดรับชำระเรียบร้อย');
+      showToast('✅ อัปเดตสถานะเป็น "ชำระเงินแล้ว" เรียบร้อย');
     } catch (err) {
-      showToast('❌ ไม่สามารถยืนยันยอดได้');
+      showToast('❌ ไม่สามารถอัปเดตสถานะได้');
     }
-  };
-
-  const handleSimulatePayment = async (billId: string) => {
-    try {
-      await updateDoc(doc(db, 'qr_bills', billId), { status: 'PAID_PENDING_VERIFY', uploadedAt: Date.now() });
-      if (selectedCustomerBill?.id === billId) setSelectedCustomerBill((prev: any) => ({ ...prev, status: 'PAID_PENDING_VERIFY', uploadedAt: Date.now() }));
-      showToast('✅ จำลองการโอนและแนบหลักฐานสำเร็จ!');
-    } catch (err) {}
   };
 
   const exportToCSV = () => {
     if (historyLogs.length === 0) return showToast("⚠️ ไม่มีข้อมูล");
-    const headers = ["วันที่สร้าง", "Ref No", "ยอดสุทธิ", "สถานะ", "วันที่รับชำระ/ส่งสลิป"];
+    const headers = ["วันที่สร้าง", "Ref No", "ยอดสุทธิ", "สถานะ", "วันที่รับชำระ"];
     const rows = historyLogs.map(log => [
       log.createdAt ? new Date(log.createdAt.toMillis()).toLocaleString('th-TH') : '', log.refNo, log.amount, 
-      log.status === 'PAID' ? 'ชำระแล้ว' : log.status === 'PAID_PENDING_VERIFY' ? 'รอตรวจสลิป' : 'รอรับชำระ', 
-      log.uploadedAt ? new Date(log.uploadedAt).toLocaleString('th-TH') : (log.paidAt ? new Date(log.paidAt).toLocaleString('th-TH') : '-')
+      log.status === 'PAID' ? 'ชำระแล้ว' : 'รอรับชำระ', 
+      log.paidAt ? new Date(log.paidAt).toLocaleString('th-TH') : '-'
     ]);
     let csvContent = "\uFEFF" + [headers, ...rows].map(e => e.join(",")).join("\n");
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `Billing_History.csv`; link.click();
   };
 
-  const filteredLogs = showOnlyPending ? historyLogs.filter(log => log.status === 'PENDING' || log.status === 'PAID_PENDING_VERIFY') : historyLogs;
+  const filteredLogs = showOnlyPending ? historyLogs.filter(log => log.status === 'PENDING') : historyLogs;
   const displayedLogs = filteredLogs.slice(0, displayLimit);
 
   if (!isOpen) return null;
@@ -300,60 +272,15 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
             </div>
 
             <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 p-1 mb-6">
-              <button onClick={() => { setQrActiveTab('generator'); setSelectedCustomerBill(null); }} className={`flex-1 py-3 text-sm font-black uppercase tracking-widest rounded-lg transition-all ${qrActiveTab === 'generator' && !selectedCustomerBill ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>ออกบิล (Generator)</button>
-              <button onClick={() => { setQrActiveTab('history'); setSelectedCustomerBill(null); }} className={`flex-1 py-3 text-sm font-black uppercase tracking-widest rounded-lg transition-all flex items-center justify-center gap-2 ${qrActiveTab === 'history' && !selectedCustomerBill ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>
-                สถานะและประวัติ <span className="bg-amber-500 text-white px-2 py-0.5 rounded-full text-[10px]">{historyLogs.filter(l => l.status === 'PAID_PENDING_VERIFY').length} รอตรวจ</span>
+              <button onClick={() => setQrActiveTab('generator')} className={`flex-1 py-3 text-sm font-black uppercase tracking-widest rounded-lg transition-all ${qrActiveTab === 'generator' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>ออกบิล (Generator)</button>
+              <button onClick={() => setQrActiveTab('history')} className={`flex-1 py-3 text-sm font-black uppercase tracking-widest rounded-lg transition-all flex items-center justify-center gap-2 ${qrActiveTab === 'history' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-600 hover:bg-slate-50'}`}>
+                สถานะและประวัติ <span className="bg-amber-500 text-white px-2 py-0.5 rounded-full text-[10px]">{historyLogs.filter(l => l.status === 'PENDING').length} รอรับชำระ</span>
               </button>
             </div>
 
-            {selectedCustomerBill ? (
-                <div className="bg-white rounded-2xl shadow-xl overflow-hidden border border-slate-200 max-w-md mx-auto animate-in fade-in zoom-in-95">
-                  <div className="bg-blue-950 text-white p-5 text-center relative">
-                    <button onClick={() => setSelectedCustomerBill(null)} className="absolute left-4 top-5 text-blue-200 hover:text-white text-[10px] font-black uppercase tracking-widest flex items-center gap-1"><ArrowLeft className="w-3 h-3"/> BACK</button>
-                    <h2 className="text-lg font-black uppercase tracking-widest">ระบบตรวจสอบบิล (จำลอง)</h2>
-                    <p className="text-[10px] text-blue-300 font-bold uppercase tracking-widest mt-1">{qrMerchantName}</p>
-                  </div>
-                  <div className="p-6 space-y-5 text-center">
-                    <div className="bg-slate-50 p-4 rounded-xl text-left text-sm border border-slate-200 space-y-2">
-                      <div className="flex justify-between"><span className="text-slate-500 font-bold">REF:</span><span className="font-mono font-black text-blue-600">{selectedCustomerBill.refNo}</span></div>
-                      <div className="flex justify-between"><span className="text-slate-500 font-bold">บัญชี:</span><span className="font-bold text-slate-800">{selectedCustomerBill.bankName}</span></div>
-                    </div>
-                    
-                    {(() => {
-                       const isExp = Date.now() > selectedCustomerBill.expireAt;
-                       const dispAmt = isExp ? selectedCustomerBill.originalAmount : selectedCustomerBill.amount;
-                       return (
-                         <>
-                          <div>
-                            <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest">ยอดเงินที่ต้องชำระ (ณ ตอนนี้)</p>
-                            <p className="text-4xl font-black text-blue-600 mt-1">฿{(dispAmt || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</p>
-                            {!isExp && selectedCustomerBill.discountPercent > 0 && <p className="text-emerald-600 text-[10px] font-bold mt-1 bg-emerald-50 px-3 py-1 inline-block rounded-full border border-emerald-100">(มีส่วนลดชำระตรงเวลา {selectedCustomerBill.discountPercent}%)</p>}
-                            {isExp && selectedCustomerBill.discountPercent > 0 && <p className="text-red-500 text-[10px] font-bold mt-1 bg-red-50 px-3 py-1 inline-block rounded-full border border-red-100">⚠️ เลยกำหนดเวลาชำระ (ไม่มีส่วนลด)</p>}
-                          </div>
-                          <div className="py-4 flex flex-col items-center gap-3">
-                            {selectedCustomerBill.status === 'PAID' ? (
-                              <div className="bg-green-50 border-2 border-green-500 rounded-2xl p-6 w-full space-y-3 shadow-inner">
-                                <p className="text-xl font-black text-green-700 uppercase tracking-tight">ชำระเงินสำเร็จ</p>
-                                <p className="text-[10px] font-bold text-green-600 uppercase tracking-widest">🔒 ล็อกระบบชำระเงินเรียบร้อย</p>
-                              </div>
-                            ) : (
-                              <div className="space-y-3 w-full flex flex-col items-center">
-                                <div className="p-4 bg-white border-2 border-blue-100 rounded-2xl shadow-sm inline-block">
-                                  {simQrData ? <img src={simQrData} alt="QR" className="w-52 h-52"/> : <div className="w-52 h-52 flex items-center justify-center text-slate-300"><Loader2 className="w-8 h-8 animate-spin"/></div>}
-                                </div>
-                                <button onClick={() => handleSimulatePayment(selectedCustomerBill.id)} className="w-full py-2 bg-slate-100 text-slate-400 rounded-lg text-[10px] font-black hover:bg-slate-200 hover:text-slate-600 uppercase tracking-widest transition-all mt-2">[DEV] จำลองการส่งสลิป</button>
-                              </div>
-                            )}
-                          </div>
-                         </>
-                       );
-                    })()}
-                  </div>
-                </div>
-            ) : qrActiveTab === 'generator' ? (
+            {qrActiveTab === 'generator' ? (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <div className="space-y-6">
-                  {/* บัญชีรับเงิน */}
                   <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
                     <h3 className="font-black text-blue-900 mb-4 uppercase tracking-widest flex items-center gap-2"><CheckCircle2 className="w-5 h-5"/> บัญชีรับเงิน</h3>
                     <div className="space-y-3">
@@ -375,7 +302,6 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
                     </div>
                   </div>
                   
-                  {/* เงื่อนไขส่วนลด */}
                   <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
                     <h3 className="font-black text-amber-600 mb-4 uppercase tracking-widest flex items-center gap-2"><Clock className="w-5 h-5"/> เงื่อนไขเวลา & ส่วนลด</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -421,7 +347,7 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
                     })}
                   </div>
                   <div className="p-4 bg-white border-t border-slate-100 rounded-b-2xl">
-                    <button onClick={processQrBatchFiles} disabled={isQrProcessing || batchFiles.length===0} className="w-full py-4 text-white text-sm font-black rounded-xl uppercase tracking-widest bg-blue-600 disabled:bg-slate-300">{isQrProcessing ? 'กำลังสร้าง PDF...' : 'GEN_AND_DOWNLOAD_PDF'}</button>
+                    <button onClick={processQrBatchFiles} disabled={isQrProcessing || batchFiles.length===0} className="w-full py-4 text-white text-sm font-black rounded-xl uppercase tracking-widest bg-blue-600 disabled:bg-slate-300">{isQrProcessing ? 'กำลังสร้าง PDF...' : 'GENERATE & DOWNLOAD PDF'}</button>
                   </div>
                 </div>
               </div>
@@ -430,7 +356,7 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
                 <div className="p-4 border-b border-slate-100 flex justify-between bg-slate-50">
                   <h3 className="font-black text-slate-800 uppercase tracking-widest text-sm">ประวัติบิลและการตรวจสอบสลิป</h3>
                   <div className="flex gap-2">
-                    <button onClick={() => setShowOnlyPending(!showOnlyPending)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border ${showOnlyPending ? 'bg-amber-50 text-amber-600' : 'bg-white text-slate-500'}`}><Filter className="w-3 h-3 inline"/> {showOnlyPending ? 'โชว์เฉพาะยอดค้าง/รอตรวจ' : 'โชว์ทั้งหมด'}</button>
+                    <button onClick={() => setShowOnlyPending(!showOnlyPending)} className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase border ${showOnlyPending ? 'bg-amber-50 text-amber-600' : 'bg-white text-slate-500'}`}><Filter className="w-3 h-3 inline"/> {showOnlyPending ? 'โชว์เฉพาะยอดค้างชำระ' : 'โชว์ทั้งหมด'}</button>
                     <button onClick={exportToCSV} className="text-[10px] bg-green-50 text-green-700 px-3 py-1.5 rounded-lg font-black uppercase">Export CSV</button>
                   </div>
                 </div>
@@ -441,26 +367,21 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
                         <th className="px-4 py-3">Ref No</th>
                         <th className="px-4 py-3 text-right">ยอดรับสุทธิ</th>
                         <th className="px-4 py-3 text-center">สถานะ</th>
-                        <th className="px-4 py-3 text-center">แอดมินตรวจรับ</th>
+                        <th className="px-4 py-3 text-center">การจัดการ</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {displayedLogs.map((log) => (
                         <tr key={log.id} className="hover:bg-slate-50">
-                          <td className="px-4 py-4 font-mono font-black text-blue-600">
-                            {log.refNo}
-                            <button onClick={() => setSelectedCustomerBill(log)} className="block text-[9px] text-blue-400 hover:underline text-left mt-0.5">👁️ จำลองเปิดดูหน้าลูกค้า</button>
-                          </td>
+                          <td className="px-4 py-4 font-mono font-black text-blue-600">{log.refNo}</td>
                           <td className="px-4 py-4 text-right font-black text-slate-800">{(log.amount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}</td>
                           <td className="px-4 py-4 text-center">
                             {log.status === 'PAID' && <span className="px-3 py-1 text-[10px] font-black text-green-700 bg-green-50 border border-green-200 rounded-full">✅ ชำระแล้ว</span>}
-                            {log.status === 'PAID_PENDING_VERIFY' && <span className="px-3 py-1 text-[10px] font-black text-amber-700 bg-amber-50 border border-amber-200 rounded-full animate-pulse">⏳ รอแอดมินตรวจสลิป</span>}
                             {log.status === 'PENDING' && <span className="px-3 py-1 text-[10px] font-black text-slate-500 bg-slate-100 border border-slate-200 rounded-full">รอรับชำระ</span>}
                           </td>
-                          <td className="px-4 py-4 text-center space-x-2">
-                            {log.slipUrl && <a href={log.slipUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-[10px] font-black hover:bg-blue-100"><Eye className="w-3 h-3"/> ดูสลิปจริง</a>}
-                            {(log.status === 'PAID_PENDING_VERIFY' || log.status === 'PENDING') && (
-                              <button onClick={() => handleApproveSlip(log.id)} className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-[10px] font-black shadow-sm hover:bg-emerald-600"><Check className="w-3 h-3"/> ยืนยันยอด</button>
+                          <td className="px-4 py-4 text-center">
+                            {log.status === 'PENDING' && (
+                              <button onClick={() => handleApproveSlip(log.id)} className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-[10px] font-black shadow-sm hover:bg-emerald-600"><Check className="w-3 h-3"/> ยืนยันว่ารับยอดแล้ว</button>
                             )}
                           </td>
                         </tr>
