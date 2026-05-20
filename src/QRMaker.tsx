@@ -126,34 +126,62 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
   const removeBatchItem = (id: string) => setBatchFiles(prev => prev.filter(item => item.id !== id));
   const updateBatchItem = (id: string, field: string, value: any) => setBatchFiles(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
 
+  // 🟢 ปรับพิกัดแกน Y ดันขึ้นด้านบน และแก้ปัญหาทศนิยม (toFixed)
   const createStampImage = async (qrBase64: string, originalAmt: number, netAmt: number, discountPct: number, refNo: string, targetTime: number, activeAcc: any) => {
     const canvas = document.createElement('canvas'); canvas.width = 708; canvas.height = 354; const ctx = canvas.getContext('2d')!;
     ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.strokeStyle = '#000000'; ctx.lineWidth = 4; ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
+    
     const img = new Image(); img.src = qrBase64; await new Promise(res => img.onload = res as any);
     const qrSize = 180; const margin = 10;
-    ctx.drawImage(img, margin, canvas.height - qrSize - margin, qrSize, qrSize);
+    // วาด QR Code ซ้ายล่าง
+    ctx.drawImage(img, margin, canvas.height - qrSize - margin - 20, qrSize, qrSize);
+    
     ctx.fillStyle = '#000000'; ctx.textAlign = 'left';
-    ctx.font = 'bold 32px sans-serif'; ctx.fillText(qrMerchantName, margin + qrSize + 10, 40);
-    ctx.font = '20px sans-serif'; ctx.fillText(`${activeAcc.bankName} : ${activeAcc.accountNo}`, margin + qrSize + 10, 70);
-    ctx.font = '20px sans-serif'; ctx.fillText(`Ref: ${refNo || '-'}`, margin + qrSize + 10, 95);
-    const textLeftX = margin + qrSize + 10;
+    const textLeftX = margin + qrSize + 20;
+    
+    // ขยับข้อความขึ้นด้านบนเพื่อลดพื้นที่ว่าง
+    ctx.font = 'bold 30px sans-serif'; ctx.fillText(qrMerchantName, textLeftX, 40);
+    ctx.font = '20px sans-serif'; ctx.fillText(`${activeAcc.bankName} : ${activeAcc.accountNo}`, textLeftX, 70);
+    ctx.font = '20px sans-serif'; ctx.fillText(`Ref: ${refNo || '-'}`, textLeftX, 95);
+    
+    const displayNetAmt = Number(netAmt.toFixed(2)).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+    const displayOrigAmt = Number(originalAmt.toFixed(2)).toLocaleString('th-TH', { minimumFractionDigits: 2 });
+
     if (discountPct > 0) {
       ctx.fillStyle = '#64748b'; ctx.font = '20px sans-serif'; 
-      ctx.fillText(`ยอดเต็ม: ${parseFloat(originalAmt.toString()).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`, textLeftX, 135);
-      ctx.fillStyle = '#000000'; ctx.font = 'bold 38px sans-serif'; 
-      ctx.fillText(`ยอดชำระ: ${parseFloat(netAmt.toString()).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`, textLeftX, 175);
+      ctx.fillText(`ยอดเต็ม: ${displayOrigAmt}`, textLeftX, 135);
+      ctx.fillStyle = '#000000'; ctx.font = 'bold 36px sans-serif'; 
+      ctx.fillText(`ยอดชำระ: ${displayNetAmt}`, textLeftX, 175);
       ctx.fillStyle = '#000000'; ctx.font = 'bold 18px sans-serif';
       ctx.fillText(`(ลด ${discountPct}% ชำระตามกำหนด)`, textLeftX, 205);
     } else {
-      ctx.fillStyle = '#000000'; ctx.font = 'bold 40px sans-serif'; 
-      ctx.fillText(`ยอดชำระ: ${parseFloat(originalAmt.toString()).toLocaleString('th-TH', { minimumFractionDigits: 2 })}`, textLeftX, 170);
+      ctx.fillStyle = '#000000'; ctx.font = 'bold 36px sans-serif'; 
+      ctx.fillText(`ยอดชำระ: ${displayOrigAmt}`, textLeftX, 170);
     }
-    ctx.fillStyle = '#000000'; ctx.font = 'bold 20px sans-serif';
-    ctx.fillText(`หมดอายุ: ${formatThaiDateTime(targetTime)}`, textLeftX, 255);
+    
+    ctx.fillStyle = '#000000'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(`หมดอายุรับส่วนลด: ${formatThaiDateTime(targetTime)}`, textLeftX, 255);
     ctx.fillStyle = '#2563eb'; ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`👉 สแกนด้วยกล้องมือถือ/LINE เพื่อชำระเงิน`, textLeftX, 295);
+    ctx.fillText(`👉 สแกนด้วยกล้องมือถือ/LINE เพื่อชำระเงิน และรับส่วนลด`, textLeftX, 290);
     return canvas.toDataURL('image/png');
+  };
+
+  // 🟢 ฟังก์ชันเพิ่ม Link Annotation ลงใน PDF (ทำให้รูปกดได้)
+  const addLinkToPdfPage = (docPdf: any, page: any, url: string, rect: number[]) => {
+    const linkAnnotation = docPdf.context.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: rect,
+      Border: [0, 0, 0],
+      A: { Type: 'Action', S: 'URI', URI: url },
+    });
+    let annots = page.node.Annots();
+    if (!annots) {
+      annots = docPdf.context.obj([]);
+      page.node.set(docPdf.context.obj('Annots'), annots);
+    }
+    annots.push(linkAnnotation);
   };
 
   const processQrBatchFiles = async () => {
@@ -173,22 +201,38 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
         const originalAmount = parseFloat(item.amount);
         const netAmount = discountPercent > 0 ? originalAmount - (originalAmount * discountPercent / 100) : originalAmount;
         const newBillRef = doc(collection(db, 'qr_bills'));
+        
+        // 🟢 บังคับให้ QR เป็นลิงก์ URL เข้าสู่หน้า Portal เสมอ (คุมสิทธิ์หมดเวลา)
         const portalUrl = `${window.location.origin}?bill=${newBillRef.id}`;
         const qrBase64Url = await (window as any).QRCode.toDataURL(portalUrl, { width: 400, margin: 1 });
+        
         const stampDataUrl = await createStampImage(qrBase64Url, originalAmount, netAmount, discountPercent, item.refNo, targetTime, activeAcc);
+        
+        const stampWidth = 60 * 2.83465;
+        const stampHeight = 30 * 2.83465;
+        const stampX = 10;
+        const stampY = 10;
+
         if (item.file) {
           const pdfBytes = await item.file.arrayBuffer(); 
           const docPdf = await PDFDocument.load(pdfBytes);
           const lastPage = docPdf.getPages()[docPdf.getPageCount() - 1]; 
           const stampPngImageForDoc = await docPdf.embedPng(stampDataUrl);
-          lastPage.drawImage(stampPngImageForDoc, { x: 10, y: 10, width: 60 * 2.83465, height: 30 * 2.83465 });
+          
+          lastPage.drawImage(stampPngImageForDoc, { x: stampX, y: stampY, width: stampWidth, height: stampHeight });
+          
+          // 🟢 สั่งฝังลิงก์ทับรูปภาพ ทำให้คลิกผ่านคอมได้
+          addLinkToPdfPage(docPdf, lastPage, portalUrl, [stampX, stampY, stampX + stampWidth, stampY + stampHeight]);
+
           const copiedPages = await masterPdf.copyPages(docPdf, docPdf.getPageIndices());
           copiedPages.forEach((page: any) => masterPdf.addPage(page));
         } else {
           const stampPngImageForMaster = await masterPdf.embedPng(stampDataUrl);
           const blankPage = masterPdf.addPage([595.28, 841.89]);
           blankPage.drawImage(stampPngImageForMaster, { x: 50, y: 841.89 - 250, width: 400, height: 200 });
+          addLinkToPdfPage(masterPdf, blankPage, portalUrl, [50, 841.89 - 250, 50 + 400, (841.89 - 250) + 200]);
         }
+        
         await setDoc(newBillRef, { 
           refNo: item.refNo, originalAmount: originalAmount, discountPercent: discountPercent, amount: netAmount, 
           bankName: activeAcc.bankName, accountNo: activeAcc.accountNo, promptpay: activeAcc.promptpay, expireAt: targetTime, status: 'PENDING', 

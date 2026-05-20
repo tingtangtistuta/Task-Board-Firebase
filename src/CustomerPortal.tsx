@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from './firebase'; 
-import { CheckCircle2, Clock, Loader2, Copy, Download, UploadCloud, FileImage, ShieldCheck } from 'lucide-react';
+import { CheckCircle2, Clock, Loader2, Copy, Download, UploadCloud, FileImage, ShieldCheck, AlertCircle } from 'lucide-react';
 
 const generatePromptPayPayload = (id: string, amount: any) => {
   const target = id.replace(/[^0-9]/g, '');
@@ -40,7 +40,6 @@ export default function CustomerPortal({ billId }: { billId: string }) {
   const [qrBase64, setQrBase64] = useState<string>('');
   const [toastMsg, setToastMsg] = useState('');
   
-  // State สำหรับอัปโหลดสลิป
   const [slipFile, setSlipFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
@@ -91,7 +90,7 @@ export default function CustomerPortal({ billId }: { billId: string }) {
     link.click();
   };
 
-  // 🟢 ฟังก์ชันอัปโหลดสลิป
+  // 🟢 ล็อกการอัปโหลดให้แน่นหนาป้องกันจอขาว
   const handleUploadSlip = async () => {
     if (!slipFile) return;
     setIsUploading(true);
@@ -101,7 +100,6 @@ export default function CustomerPortal({ billId }: { billId: string }) {
       await uploadBytes(slipRef, slipFile);
       const slipUrl = await getDownloadURL(slipRef);
       
-      // เปลี่ยนสถานะบิลเป็น รอตรวจสอบ (PAID_PENDING_VERIFY)
       await updateDoc(doc(db, 'qr_bills', billId), { 
         status: 'PAID_PENDING_VERIFY', 
         slipUrl: slipUrl,
@@ -109,9 +107,11 @@ export default function CustomerPortal({ billId }: { billId: string }) {
       });
       showToast('ส่งหลักฐานสำเร็จ! ระบบกำลังตรวจสอบ');
     } catch (err) {
-      showToast('❌ เกิดข้อผิดพลาดในการอัปโหลดไฟล์');
+      console.error(err);
+      showToast('❌ เกิดข้อผิดพลาดในการอัปโหลดไฟล์ (ขัดข้องทางเซิร์ฟเวอร์)');
+    } finally {
+      setIsUploading(false); // บังคับคืนสถานะปุ่มเสมอ
     }
-    setIsUploading(false);
   };
 
   if (!bill) return <div className="min-h-screen bg-slate-50 flex items-center justify-center text-slate-500 font-black tracking-widest"><Loader2 className="w-8 h-8 animate-spin"/></div>;
@@ -124,7 +124,6 @@ export default function CustomerPortal({ billId }: { billId: string }) {
     <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4 font-sans text-slate-800">
       <div className="bg-white rounded-[2rem] shadow-2xl overflow-hidden border border-slate-200 w-full max-w-4xl animate-in zoom-in-95 duration-300">
         
-        {/* Header Section */}
         <div className="bg-blue-950 text-white p-8 text-center sm:text-left flex flex-col sm:flex-row justify-between items-center gap-4">
           <div>
             <h2 className="text-2xl font-black uppercase tracking-widest">ระบบรับชำระเงินออนไลน์</h2>
@@ -136,7 +135,6 @@ export default function CustomerPortal({ billId }: { billId: string }) {
           </div>
         </div>
 
-        {/* 🟢 หน้าจอสถานะ: จ่ายแล้ว หรือ รอตรวจสอบสลิป */}
         {bill.status === 'PAID' || bill.status === 'PAID_PENDING_VERIFY' ? (
           <div className="p-12 text-center space-y-6">
             <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 ${bill.status === 'PAID' ? 'bg-green-100 text-green-600' : 'bg-amber-100 text-amber-500'}`}>
@@ -158,22 +156,17 @@ export default function CustomerPortal({ billId }: { billId: string }) {
             )}
           </div>
         ) : (
-          /* โหมด: รอชำระเงิน (Dual Column) */
           <div className="grid grid-cols-1 md:grid-cols-2">
-            
-            {/* ฝั่งซ้าย: ข้อมูลบัญชีและยอดเงิน */}
             <div className="p-8 border-b md:border-b-0 md:border-r border-slate-200 space-y-6 bg-slate-50/50">
-              
               <div>
                 <div className="flex justify-between items-end mb-2">
                   <p className="text-slate-500 text-xs font-black uppercase tracking-widest">ยอดชำระสุทธิ</p>
-                  <button onClick={() => copyToClipboard(displayAmount.toString(), 'ยอดเงิน')} className="flex items-center gap-1 text-[10px] bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-1 rounded-md font-bold transition-all"><Copy className="w-3 h-3"/> คัดลอกยอดเงิน</button>
+                  <button onClick={() => copyToClipboard(displayAmount.toFixed(2), 'ยอดเงิน')} className="flex items-center gap-1 text-[10px] bg-blue-100 text-blue-700 hover:bg-blue-200 px-2 py-1 rounded-md font-bold transition-all"><Copy className="w-3 h-3"/> คัดลอกยอดเงิน</button>
                 </div>
                 <p className={`text-5xl font-black ${isExpired ? 'text-slate-800' : 'text-blue-600'} tracking-tight`}>
                   ฿{(displayAmount || 0).toLocaleString('th-TH', { minimumFractionDigits: 2 })}
                 </p>
                 
-                {/* 🟢 การเช็คและแสดงเวลาส่วนลด */}
                 {!isExpired && bill.discountPercent > 0 && (
                   <div className="mt-3 bg-emerald-50 border border-emerald-200 p-3 rounded-xl">
                     <p className="text-emerald-700 text-xs font-bold">✨ รวมส่วนลดชำระตรงเวลา <span className="font-black text-lg">{bill.discountPercent}%</span> แล้ว</p>
@@ -207,21 +200,20 @@ export default function CustomerPortal({ billId }: { billId: string }) {
               </div>
             </div>
 
-            {/* ฝั่งขวา: สแกน QR และแนบสลิป */}
             <div className="p-8 flex flex-col space-y-6">
               
-              {/* QR Code Zone */}
               <div className="flex flex-col items-center justify-center border-b border-slate-100 pb-6">
                 <p className="text-slate-800 font-black text-sm uppercase tracking-widest mb-4">วิธีที่ 2: สแกนเพื่อชำระเงิน</p>
                 <div className="p-3 bg-white border-2 border-blue-100 rounded-2xl shadow-sm relative mb-4">
                   {qrBase64 ? <img src={qrBase64} alt="QR Code" className="w-48 h-48"/> : <div className="w-48 h-48 flex items-center justify-center text-slate-300"><Loader2 className="w-8 h-8 animate-spin"/></div>}
                 </div>
-                <button onClick={downloadQR} className="text-[10px] text-blue-600 font-black uppercase tracking-widest hover:underline flex items-center gap-1">
+                <button onClick={downloadQR} className="text-[10px] text-blue-600 font-black uppercase tracking-widest hover:underline flex items-center justify-center gap-1">
                   <Download className="w-3 h-3"/> บันทึกรูปลงเครื่อง
                 </button>
+                {/* 🟢 แจ้งเตือนลูกค้า iOS ที่เปิดผ่านไลน์ */}
+                <p className="text-[9px] text-slate-400 mt-2 text-center flex items-center justify-center gap-1"><AlertCircle className="w-3 h-3"/> หากกดปุ่มไม่ได้ (เช่น iOS LINE) ให้กดค้างที่รูปภาพเพื่อบันทึกแทน</p>
               </div>
 
-              {/* 🟢 Slip Upload Zone */}
               <div className="flex flex-col flex-1 justify-end">
                 <p className="text-slate-800 font-black text-sm uppercase tracking-widest mb-3">ส่งหลักฐานการโอนเงิน</p>
                 
