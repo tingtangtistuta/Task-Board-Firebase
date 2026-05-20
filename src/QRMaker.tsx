@@ -133,38 +133,39 @@ export default function QRMaker({ isOpen, onClose, loggedInUser, showToast }: { 
     ctx.strokeStyle = '#000000'; ctx.lineWidth = 4; ctx.strokeRect(2, 2, canvas.width - 4, canvas.height - 4);
     
     const img = new Image(); img.src = qrBase64; await new Promise(res => img.onload = res as any);
-    const qrSize = 180; const margin = 10;
+    const qrSize = 160; // ลดขนาด QR เล็กน้อยเพื่อให้มีพื้นที่ข้อความมากขึ้น
+    const margin = 10;
     
-    // วาด QR Code ให้ชิดซ้ายล่าง และดันข้อความขึ้น
-    ctx.drawImage(img, margin, canvas.height - qrSize - margin - 20, qrSize, qrSize);
+    // วาง QR ให้สมดุลขึ้นทางซ้าย
+    ctx.drawImage(img, margin + 5, (canvas.height - qrSize) / 2, qrSize, qrSize);
     
     ctx.fillStyle = '#000000'; ctx.textAlign = 'left';
     const textLeftX = margin + qrSize + 20;
     
-    ctx.font = 'bold 30px sans-serif'; ctx.fillText(qrMerchantName, textLeftX, 40);
-    ctx.font = '20px sans-serif'; ctx.fillText(`${activeAcc.bankName} : ${activeAcc.accountNo}`, textLeftX, 70);
-    ctx.font = '20px sans-serif'; ctx.fillText(`Ref: ${refNo || '-'}`, textLeftX, 95);
+    // 🟢 แก้ไข: ขยับตำแหน่ง Y ขึ้นด้านบนทั้งหมด และใช้ Font ที่กระชับขึ้น
+    ctx.font = 'bold 32px sans-serif'; ctx.fillText(qrMerchantName, textLeftX, 50);
+    ctx.font = '22px sans-serif'; ctx.fillText(`${activeAcc.bankName} : ${activeAcc.accountNo}`, textLeftX, 85);
+    ctx.font = '22px sans-serif'; ctx.fillText(`Ref: ${refNo || '-'}`, textLeftX, 115);
     
-    // แก้ปัญหาทศนิยมเกิน 2 ตำแหน่ง
     const displayNetAmt = Number(netAmt.toFixed(2)).toLocaleString('th-TH', { minimumFractionDigits: 2 });
     const displayOrigAmt = Number(originalAmt.toFixed(2)).toLocaleString('th-TH', { minimumFractionDigits: 2 });
 
     if (discountPct > 0) {
       ctx.fillStyle = '#64748b'; ctx.font = '20px sans-serif'; 
-      ctx.fillText(`ยอดเต็ม: ${displayOrigAmt}`, textLeftX, 135);
-      ctx.fillStyle = '#000000'; ctx.font = 'bold 36px sans-serif'; 
-      ctx.fillText(`ยอดชำระ: ${displayNetAmt}`, textLeftX, 175);
-      ctx.fillStyle = '#000000'; ctx.font = 'bold 18px sans-serif';
-      ctx.fillText(`(ลด ${discountPct}% ชำระตามกำหนด)`, textLeftX, 205);
+      ctx.fillText(`ยอดเต็ม: ${displayOrigAmt}`, textLeftX, 150);
+      ctx.fillStyle = '#000000'; ctx.font = 'bold 44px sans-serif'; 
+      ctx.fillText(`ยอดชำระ: ${displayNetAmt}`, textLeftX, 195);
+      ctx.fillStyle = '#000000'; ctx.font = 'bold 20px sans-serif';
+      ctx.fillText(`(ลด ${discountPct}% ชำระตามกำหนด)`, textLeftX, 225);
     } else {
-      ctx.fillStyle = '#000000'; ctx.font = 'bold 36px sans-serif'; 
-      ctx.fillText(`ยอดชำระ: ${displayOrigAmt}`, textLeftX, 170);
+      ctx.fillStyle = '#000000'; ctx.font = 'bold 44px sans-serif'; 
+      ctx.fillText(`ยอดชำระ: ${displayOrigAmt}`, textLeftX, 190);
     }
     
-    ctx.fillStyle = '#000000'; ctx.font = 'bold 18px sans-serif';
-    ctx.fillText(`หมดอายุรับส่วนลด: ${formatThaiDateTime(targetTime)}`, textLeftX, 255);
-    ctx.fillStyle = '#2563eb'; ctx.font = 'bold 16px sans-serif';
-    ctx.fillText(`👉 สแกนด้วยแอปธนาคารเพื่อชำระเงินทันที`, textLeftX, 290);
+    ctx.fillStyle = '#000000'; ctx.font = 'bold 20px sans-serif';
+    ctx.fillText(`หมดอายุรับส่วนลด: ${formatThaiDateTime(targetTime)}`, textLeftX, 275);
+    ctx.fillStyle = '#2563eb'; ctx.font = 'bold 18px sans-serif';
+    ctx.fillText(`👉 สแกนด้วยแอปธนาคารเพื่อชำระเงินทันที`, textLeftX, 310);
     return canvas.toDataURL('image/png');
   };
 
