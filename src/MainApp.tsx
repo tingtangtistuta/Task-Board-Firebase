@@ -370,12 +370,23 @@ export default function MainApp() {
                 <div key={task.id} onClick={() => setSelectedTaskId(task.id)} className={`p-4 rounded-2xl border-2 dark:border cursor-pointer relative group transition-all duration-200 ${cardStyle}`}>
                   {isUnread && <span className="absolute top-4 left-2 w-3 h-3 bg-green-500 dark:bg-lime-500 rounded-full border-2 border-white dark:border-slate-900 animate-pulse"></span>}
                   {renderGauge(stepIdx, task.hasIssue)}
+                  
+                  {/* 🟢 กู้คืน: โซนรายละเอียดงานและปุ่มถังขยะ */}
                   <div className="flex justify-between items-start mb-2 mt-2">
                     <h3 className={`text-sm leading-tight pr-6 line-clamp-2 ${selectedTaskId === task.id ? 'text-white font-black' : (isUnread ? 'text-slate-900 dark:text-white font-black' : 'text-slate-800 dark:text-slate-300 font-bold')}`}>{task.topic}</h3>
+                    {loggedInUser?.role === 'Admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
                   </div>
                   <div className={`flex items-center gap-3 mt-3 text-[10px] ${selectedTaskId === task.id ? 'text-blue-100' : 'text-slate-500'}`}>
                     <div className="flex items-center gap-1"><User className="w-3 h-3"/> สั่งโดย: <span className="font-bold underline">{task.requester}</span></div>
                     <div className="flex items-center gap-1"><Users className="w-3 h-3"/> {(task.relatedPersons || []).length} คน</div>
+                  </div>
+                  
+                  {/* 🟢 กู้คืน: แถบสถานะด้านล่างสุด + วันกำหนดส่ง */}
+                  <div className={`flex justify-between items-center mt-3 pt-3 border-t ${selectedTaskId === task.id ? 'border-white/20' : 'border-slate-200 dark:border-slate-700/50'}`}>
+                    <div className={`text-[10px] font-black uppercase tracking-tight flex items-center gap-1 ${task.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : (selectedTaskId === task.id ? 'text-white' : stepData.text)}`}>
+                        {task.hasIssue ? <AlertTriangle className="w-3.5 h-3.5"/> : stepData.icon} {task.hasIssue ? 'CRITICAL ISSUE!' : stepData.label}
+                    </div>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border tracking-wider ${selectedTaskId === task.id ? 'bg-white/20 border-transparent text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-transparent dark:border-slate-700'}`}>🏁 {task.dueDate}</span>
                   </div>
                 </div>
               );
@@ -387,7 +398,7 @@ export default function MainApp() {
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             
-            {/* 🟢 Mission Header & Status Bar */}
+            {/* Mission Header & Status Bar */}
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1 pr-4">
@@ -455,7 +466,7 @@ export default function MainApp() {
 
                         <div className={`relative flex items-center gap-2 ${isMe ? 'flex-row-reverse' : ''} max-w-[85%]`}>
                           
-                          {/* เมนูโต้ตอบ (Hover Menu) - ตัด Edit ออก เหลือแค่ Reply กับ Delete */}
+                          {/* เมนูโต้ตอบ (Hover Menu) */}
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white dark:bg-slate-800 shadow-sm border rounded-lg p-1 absolute -top-4 -right-12 z-20">
                              <button onClick={()=>setReplyingTo(c)} className="p-1 text-slate-400 hover:text-blue-500 rounded"><Reply className="w-3.5 h-3.5"/></button>
                              {(isMe || isAdmin) && <button onClick={()=>handleDeleteChat(c.id)} className="p-1 text-slate-400 hover:text-red-500 rounded"><Trash2 className="w-3.5 h-3.5"/></button>}
