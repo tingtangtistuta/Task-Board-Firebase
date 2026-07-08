@@ -6,7 +6,7 @@ import {
   Search, CheckCircle2, Clock, 
   Paperclip, Send, AlertTriangle, ArrowLeft,
   MessageSquare, User, Plus, Loader2, LogOut, X, Package, CalendarDays, Trash2, Users, UserPlus, FileText, Filter,
-  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, Edit2, CheckCheck
+  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck
 } from 'lucide-react';
 import QRMaker from './QRMaker'; 
 import BillingMatcher from './BillingMatcher'; 
@@ -36,8 +36,6 @@ export default function MainApp() {
   const [sortBy, setSortBy] = useState('latest');
   
   const [replyingTo, setReplyingTo] = useState<any>(null);
-  const [editingChatId, setEditingChatId] = useState<string | null>(null);
-  const [editChatText, setEditChatText] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   const [isModalOpen, setIsModalOpen] = useState(false); 
@@ -172,14 +170,6 @@ export default function MainApp() {
       updateDoc(doc(db, 'tasks', selectedTaskId), { lastActivity: serverTimestamp(), unreadBy: arrayUnion(...unreadList) }).catch(()=>{});
     } catch(err) { showToast('❌ ส่งข้อมูลล้มเหลว'); }
     setIsUploading(false);
-  };
-
-  const saveEditedMessage = async () => {
-    if (!editingChatId || !editChatText.trim() || !selectedTaskId) return;
-    try {
-      await updateDoc(doc(db, 'tasks', selectedTaskId, 'chats', editingChatId), { text: editChatText, isEdited: true });
-      setEditingChatId(null); setEditChatText('');
-    } catch(err) { showToast('❌ แก้ไขข้อความล้มเหลว'); }
   };
 
   const handleDeleteChat = async (chatId: string) => {
@@ -397,7 +387,7 @@ export default function MainApp() {
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             
-            {/* 🟢 Mission Header */}
+            {/* 🟢 Mission Header & Status Bar */}
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1 pr-4">
@@ -415,7 +405,6 @@ export default function MainApp() {
                 </div>
               </div>
               
-              {/* 🟢 คืนชีพส่วนที่ลืม: โซนบอกสถานะ (Global Progress & Driver Sync) */}
               <div className="space-y-4 pt-2">
                 <div>
                    <div className="flex justify-between items-end mb-1"><span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Global Progress</span><span className={`text-xs font-black italic uppercase ${selectedTask.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : globalStepData.text}`}>{selectedTask.hasIssue ? 'MALFUNCTION' : globalStepData.label}</span></div>
@@ -444,7 +433,7 @@ export default function MainApp() {
               </div>
             </div>
 
-            {/* 💬 โซนข้อความแชท (อัปเกรดใหม่) */}
+            {/* 💬 โซนข้อความแชท */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-transparent z-10 transition-colors">
               {(chats[selectedTaskId!] || []).map((c: any) => {
                 const isMe = c.sender === loggedInUser?.name;
@@ -462,54 +451,41 @@ export default function MainApp() {
                           <span className="uppercase">{c.sender}</span>
                           <span>•</span>
                           <span>{formatFullDateTime(c.timestamp)}</span>
-                          {c.isEdited && <span className="text-amber-500 italic">(แก้ไขแล้ว)</span>}
                         </div>
 
-                        {/* กล่องแก้ไขข้อความ */}
-                        {editingChatId === c.id ? (
-                           <div className={`flex flex-col gap-2 p-3 rounded-2xl border w-full max-w-[85%] ${isMe ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200'}`}>
-                             <textarea className="w-full bg-white p-2 rounded-lg text-sm outline-none border focus:border-blue-500" value={editChatText} onChange={(e)=>setEditChatText(e.target.value)} autoFocus />
-                             <div className="flex justify-end gap-2">
-                               <button onClick={()=>setEditingChatId(null)} className="px-3 py-1 bg-slate-200 rounded text-[10px] font-black">ยกเลิก</button>
-                               <button onClick={saveEditedMessage} className="px-3 py-1 bg-blue-600 text-white rounded text-[10px] font-black">บันทึก</button>
-                             </div>
-                           </div>
-                        ) : (
-                          <div className={`relative flex items-center gap-2 ${isMe ? 'flex-row-reverse' : ''} max-w-[85%]`}>
-                            
-                            {/* เมนูโต้ตอบ (Hover Menu) */}
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white dark:bg-slate-800 shadow-sm border rounded-lg p-1 absolute -top-4 -right-12 z-20">
-                               <button onClick={()=>setReplyingTo(c)} className="p-1 text-slate-400 hover:text-blue-500 rounded"><Reply className="w-3.5 h-3.5"/></button>
-                               {(isMe || isAdmin) && <button onClick={()=>{setEditingChatId(c.id); setEditChatText(c.text);}} className="p-1 text-slate-400 hover:text-amber-500 rounded"><Edit2 className="w-3.5 h-3.5"/></button>}
-                               {(isMe || isAdmin) && <button onClick={()=>handleDeleteChat(c.id)} className="p-1 text-slate-400 hover:text-red-500 rounded"><Trash2 className="w-3.5 h-3.5"/></button>}
-                            </div>
-
-                            <div className={`p-4 rounded-[1.2rem] text-sm shadow-sm relative ${isMe ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-none text-slate-800 dark:text-slate-200'}`}>
-                              
-                              {/* 🟢 การแสดง Quote ข้อความที่ถูก Reply */}
-                              {c.replyTo && (
-                                <div className="mb-3 p-2 bg-black/10 dark:bg-black/30 rounded-lg border-l-4 border-l-amber-400 text-[10px] opacity-80 cursor-pointer line-clamp-2">
-                                  <div className="font-black mb-1">{c.replyTo.sender}</div>
-                                  <div>{c.replyTo.fileUrl ? '📸 ส่งไฟล์/รูปภาพ' : c.replyTo.text}</div>
-                                </div>
-                              )}
-
-                              {/* 🟢 ระบบ Image Preview & File Attachment */}
-                              {c.fileUrl && (
-                                isImage ? (
-                                  <img src={c.fileUrl} alt="attachment" onClick={()=>setPreviewImage(c.fileUrl)} className="max-w-[200px] max-h-[200px] object-cover rounded-lg mb-2 cursor-pointer border border-black/10 hover:opacity-90 transition-opacity" />
-                                ) : (
-                                  <a href={c.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 mb-3 bg-black/10 p-3 rounded-lg text-[11px] font-black hover:bg-black/20 transition-all text-slate-800 dark:text-blue-300"><Package className="w-5 h-5"/> {c.fileName}</a>
-                                )
-                              )}
-                              
-                              {/* 🟢 เรนเดอร์ข้อความพร้อมไฮไลท์ @เมนชั่น */}
-                              {c.text && <span className="whitespace-pre-wrap leading-relaxed font-medium">{renderMessageTextWithMentions(c.text)}</span>}
-                            </div>
+                        <div className={`relative flex items-center gap-2 ${isMe ? 'flex-row-reverse' : ''} max-w-[85%]`}>
+                          
+                          {/* เมนูโต้ตอบ (Hover Menu) - ตัด Edit ออก เหลือแค่ Reply กับ Delete */}
+                          <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white dark:bg-slate-800 shadow-sm border rounded-lg p-1 absolute -top-4 -right-12 z-20">
+                             <button onClick={()=>setReplyingTo(c)} className="p-1 text-slate-400 hover:text-blue-500 rounded"><Reply className="w-3.5 h-3.5"/></button>
+                             {(isMe || isAdmin) && <button onClick={()=>handleDeleteChat(c.id)} className="p-1 text-slate-400 hover:text-red-500 rounded"><Trash2 className="w-3.5 h-3.5"/></button>}
                           </div>
-                        )}
+
+                          <div className={`p-4 rounded-[1.2rem] text-sm shadow-sm relative ${isMe ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-none text-slate-800 dark:text-slate-200'}`}>
+                            
+                            {/* การแสดง Quote ข้อความที่ถูก Reply */}
+                            {c.replyTo && (
+                              <div className="mb-3 p-2 bg-black/10 dark:bg-black/30 rounded-lg border-l-4 border-l-amber-400 text-[10px] opacity-80 cursor-pointer line-clamp-2">
+                                <div className="font-black mb-1">{c.replyTo.sender}</div>
+                                <div>{c.replyTo.fileUrl ? '📸 ส่งไฟล์/รูปภาพ' : c.replyTo.text}</div>
+                              </div>
+                            )}
+
+                            {/* ระบบ Image Preview & File Attachment */}
+                            {c.fileUrl && (
+                              isImage ? (
+                                <img src={c.fileUrl} alt="attachment" onClick={()=>setPreviewImage(c.fileUrl)} className="max-w-[200px] max-h-[200px] object-cover rounded-lg mb-2 cursor-pointer border border-black/10 hover:opacity-90 transition-opacity" />
+                              ) : (
+                                <a href={c.fileUrl} target="_blank" rel="noreferrer" className="flex items-center gap-3 mb-3 bg-black/10 p-3 rounded-lg text-[11px] font-black hover:bg-black/20 transition-all text-slate-800 dark:text-blue-300"><Package className="w-5 h-5"/> {c.fileName}</a>
+                              )
+                            )}
+                            
+                            {/* เรนเดอร์ข้อความพร้อมไฮไลท์ @เมนชั่น */}
+                            {c.text && <span className="whitespace-pre-wrap leading-relaxed font-medium">{renderMessageTextWithMentions(c.text)}</span>}
+                          </div>
+                        </div>
                         
-                        {/* 🟢 Read Receipts (เครื่องหมายถูก) เฉพาะข้อความของตัวเอง */}
+                        {/* Read Receipts (เครื่องหมายถูก) เฉพาะข้อความของตัวเอง */}
                         {isMe && !c.isSystem && (
                           <div className={`text-[10px] mt-1 pr-1 ${isRead ? 'text-blue-500' : 'text-slate-400'}`}>
                              {isRead ? <CheckCheck className="w-4 h-4 inline" /> : <CheckCircle2 className="w-3 h-3 inline" />}
@@ -569,7 +545,7 @@ export default function MainApp() {
         )}
       </div>
       
-      {/* โมดูลอื่นๆ ของระบบ ยังคงอยู่ครบถ้วน */}
+      {/* โมดูลอื่นๆ ของระบบ */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[300]">
           <form onSubmit={handleCreateTask} className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-md p-8 space-y-5 shadow-2xl border-b-8 border-blue-600 dark:border-b-0 dark:border dark:border-slate-700 animate-in zoom-in-95 duration-200 transition-colors">
