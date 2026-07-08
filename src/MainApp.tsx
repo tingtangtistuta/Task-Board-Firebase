@@ -21,7 +21,6 @@ export default function MainApp() {
   const [toastMsg, setToastMsg] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(false);
 
-  // --- State ของระบบบอร์ดงาน ---
   const [tasks, setTasks] = useState<any[]>([]);
   const [chats, setChats] = useState<any>({});
   const [userPresence, setUserPresence] = useState<any>({});
@@ -36,13 +35,11 @@ export default function MainApp() {
   const [filterStatus, setFilterStatus] = useState('All');
   const [sortBy, setSortBy] = useState('latest');
   
-  // 🟢 State สำหรับแชทอัปเกรด (Reply, Edit, Image Preview)
   const [replyingTo, setReplyingTo] = useState<any>(null);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editChatText, setEditChatText] = useState('');
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  // --- Modals Control State ---
   const [isModalOpen, setIsModalOpen] = useState(false); 
   const [isAddPersonModalOpen, setIsAddPersonModalOpen] = useState(false); 
   const [isQrModalOpen, setIsQrModalOpen] = useState(false); 
@@ -143,7 +140,6 @@ export default function MainApp() {
     setIsLoading(false);
   };
 
-  // 🟢 ฟังก์ชันส่งข้อความแบบอัปเกรด (บันทึกการ Reply ด้วย)
   const handleSendMessage = async (e: any) => {
     e.preventDefault();
     if ((!chatInput.trim() && !chatFile) || !selectedTaskId || isUploading) return;
@@ -178,7 +174,6 @@ export default function MainApp() {
     setIsUploading(false);
   };
 
-  // 🟢 ฟังก์ชันแก้ไขข้อความ
   const saveEditedMessage = async () => {
     if (!editingChatId || !editChatText.trim() || !selectedTaskId) return;
     try {
@@ -187,7 +182,6 @@ export default function MainApp() {
     } catch(err) { showToast('❌ แก้ไขข้อความล้มเหลว'); }
   };
 
-  // 🟢 ฟังก์ชันลบข้อความ
   const handleDeleteChat = async (chatId: string) => {
     if (!selectedTaskId) return;
     if (window.confirm("คุณต้องการลบข้อความนี้หรือไม่?")) {
@@ -251,18 +245,15 @@ export default function MainApp() {
     }});
   };
 
-  // 🟢 Helper: ฟอร์แมตวันที่แบบละเอียดยิบ
   const formatFullDateTime = (timestamp: any) => {
     if (!timestamp?.toDate) return 'กำลังส่ง...';
     return timestamp.toDate().toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
 
-  // 🟢 Helper: ตรวจสอบว่าเป็นไฟล์รูปภาพหรือไม่
   const isImageFile = (fileName: string) => {
     return fileName?.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null;
   };
 
-  // 🟢 Helper: ไฮไลท์ @ชื่อคนในข้อความ
   const renderMessageTextWithMentions = (text: string) => {
     if (!text) return null;
     const parts = text.split(/(@\S+)/g);
@@ -405,7 +396,8 @@ export default function MainApp() {
         {/* --- Chat Window --- */}
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
-            {/* Mission Header */}
+            
+            {/* 🟢 Mission Header */}
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1 pr-4">
@@ -422,6 +414,34 @@ export default function MainApp() {
                   )}
                 </div>
               </div>
+              
+              {/* 🟢 คืนชีพส่วนที่ลืม: โซนบอกสถานะ (Global Progress & Driver Sync) */}
+              <div className="space-y-4 pt-2">
+                <div>
+                   <div className="flex justify-between items-end mb-1"><span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Global Progress</span><span className={`text-xs font-black italic uppercase ${selectedTask.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : globalStepData.text}`}>{selectedTask.hasIssue ? 'MALFUNCTION' : globalStepData.label}</span></div>
+                   {renderGauge(selectedTask.currentStep||0, selectedTask.hasIssue)}
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 transition-colors">
+                  <div className="flex justify-between items-center mb-3 px-1">
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Driver Sync</span>
+                    <button onClick={() => setIsAddPersonModalOpen(true)} className="p-1.5 bg-white dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg border border-slate-200 dark:border-blue-500/30 hover:bg-slate-100 dark:hover:bg-blue-800/50 transition-all shadow-sm"><UserPlus className="w-4 h-4"/></button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {(selectedTask.relatedPersons || []).map((p: string) => {
+                      const pStepIdx = (selectedTask.individualStatus?.[p] >= 0 && selectedTask.individualStatus?.[p] <= 3) ? selectedTask.individualStatus[p] : 0;
+                      const pStepData = steps[pStepIdx] || steps[0];
+                      const isMe = p === loggedInUser?.name;
+                      return (
+                        <div key={p} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-black transition-all ${isMe ? 'bg-white dark:bg-slate-800 border-blue-400 dark:border-blue-500 text-slate-800 dark:text-white shadow-md' : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'}`}>
+                          <span>{p}</span>
+                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase ${pStepData.color} text-white`}>{pStepData.icon} {pStepData.label}</div>
+                          {isMe && pStepIdx < 3 && <button onClick={advanceMyStep} className="bg-blue-600 text-white px-2 py-1 rounded shadow-sm hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase text-[9px] italic ml-1">BOOST ⚡</button>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
             </div>
 
             {/* 💬 โซนข้อความแชท (อัปเกรดใหม่) */}
@@ -430,7 +450,7 @@ export default function MainApp() {
                 const isMe = c.sender === loggedInUser?.name;
                 const isAdmin = loggedInUser?.role === 'Admin';
                 const isImage = c.fileName && isImageFile(c.fileName);
-                const isRead = !((selectedTask?.unreadBy || []).length > 0); // ง่ายๆ ถือว่าทุกคนอ่านแล้วถ้า unreadBy ว่าง
+                const isRead = !((selectedTask?.unreadBy || []).length > 0); 
                 
                 return (
                   <div key={c.id} className={`flex flex-col group ${c.isSystem ? 'items-center' : (isMe ? 'items-end' : 'items-start')}`}>
@@ -550,7 +570,76 @@ export default function MainApp() {
       </div>
       
       {/* โมดูลอื่นๆ ของระบบ ยังคงอยู่ครบถ้วน */}
-      {isModalOpen && ( /* ... New Task Modal โค้ดเดิม ... */ <div/> )}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[300]">
+          <form onSubmit={handleCreateTask} className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-md p-8 space-y-5 shadow-2xl border-b-8 border-blue-600 dark:border-b-0 dark:border dark:border-slate-700 animate-in zoom-in-95 duration-200 transition-colors">
+            <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-800 pb-4">
+              <h2 className="font-black text-2xl text-slate-800 dark:text-white tracking-tighter italic uppercase">NEW MISSION 🚀</h2>
+              <button type="button" onClick={()=>setIsModalOpen(false)} className="bg-slate-100 dark:bg-slate-800 p-2 rounded-lg text-slate-400 hover:text-red-500 dark:hover:text-white transition-all"><X className="w-5 h-5"/></button>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 ml-1 uppercase tracking-widest">Topic</label>
+              <input type="text" list="topic-list" className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl outline-none font-black text-blue-700 dark:text-white focus:border-blue-500 transition-all" value={newTask.topic} onChange={e=>setNewTask({...newTask, topic: e.target.value})} autoFocus/>
+              <datalist id="topic-list">{allTopics.map((t,i)=><option key={i} value={t}/>)}</datalist>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-amber-500 ml-1 uppercase tracking-widest">Deadline 🏁</label>
+                <input type="date" className="w-full p-3.5 bg-amber-50 dark:bg-slate-950 border border-amber-200 dark:border-amber-500/30 rounded-xl outline-none font-bold text-amber-700 dark:text-amber-400" value={newTask.dueDate} onChange={e=>setNewTask({...newTask, dueDate: e.target.value})}/>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-500 ml-1 uppercase tracking-widest">Ref No.</label>
+                <input type="text" className="w-full p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl outline-none font-bold text-slate-800 dark:text-white" value={newTask.documentNo} onChange={e=>setNewTask({...newTask, documentNo: e.target.value})}/>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-500 ml-1 uppercase tracking-widest">Briefing</label>
+              <textarea className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl outline-none font-bold text-slate-700 dark:text-slate-300 h-24 resize-none" value={newTask.details} onChange={e=>setNewTask({...newTask, details: e.target.value})}/>
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-blue-600 dark:text-blue-500 ml-1 uppercase tracking-widest">Select Drivers 👥</label>
+              <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border border-blue-100 dark:border-slate-800 p-3 rounded-xl bg-blue-50/50 dark:bg-slate-950">
+                {(settings?.users || []).map((u: string) => (
+                  <label key={u} className="flex items-center gap-2 text-xs font-bold p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg transition-all cursor-pointer text-slate-700 dark:text-slate-300">
+                    <input type="checkbox" className="rounded-sm w-4 h-4 border-slate-300 dark:bg-slate-900 dark:border-slate-700 text-blue-600 focus:ring-0" checked={newTask.relatedPersons.includes(u)} onChange={e => { if(e.target.checked) setNewTask({...newTask, relatedPersons:[...newTask.relatedPersons, u]}); else setNewTask({...newTask, relatedPersons: newTask.relatedPersons.filter(n=>n!==u)})}}/> {u}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-xl font-black text-lg shadow-xl hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase italic tracking-widest mt-2">Engage ⚡</button>
+          </form>
+        </div>
+      )}
+
+      {isAddPersonModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
+          <div className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-xs p-6 shadow-2xl border-t-8 border-blue-600 dark:border-t-0 dark:border dark:border-slate-700 transition-colors">
+            <h3 className="font-black text-xl mb-4 flex items-center gap-2 italic uppercase text-slate-800 dark:text-white"><UserPlus className="w-6 h-6 text-blue-600 dark:text-blue-500"/> Add Driver</h3>
+            <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+              {(settings?.users || []).filter((u: string) => !(selectedTask?.relatedPersons || []).includes(u)).map((u: string) => (
+                <button key={u} onClick={()=>{addPersonToTask(u); setIsAddPersonModalOpen(false);}} className="w-full text-left p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-slate-800 transition-all font-bold text-slate-700 dark:text-slate-300 flex justify-between items-center uppercase tracking-tight group">{u} <Plus className="w-4 h-4 opacity-0 group-hover:opacity-100 text-blue-500"/></button>
+              ))}
+            </div>
+            <button onClick={()=>setIsAddPersonModalOpen(false)} className="w-full mt-4 p-3 bg-slate-100 dark:bg-slate-800 rounded-xl text-slate-500 dark:text-slate-400 font-black hover:text-slate-800 dark:hover:text-white uppercase text-[10px] tracking-widest">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[200]">
+          <div className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-sm p-8 shadow-2xl border-t-8 dark:border-t-0 border-transparent dark:border dark:border-slate-700 relative overflow-hidden transition-colors">
+            {confirmModal.type === 'danger' && <div className="absolute top-0 left-0 w-full h-2 bg-red-600 dark:bg-rose-600 shadow-[0_0_15px_#e11d48]"></div>}
+            {confirmModal.type === 'info' && <div className="absolute top-0 left-0 w-full h-2 bg-blue-600 shadow-[0_0_15px_#2563eb]"></div>}
+            <h3 className={`text-xl font-black mb-3 flex items-center gap-2 uppercase italic tracking-tighter ${confirmModal.type==='danger'?'text-red-600 dark:text-rose-500':'text-slate-800 dark:text-white'}`}>{confirmModal.title}</h3>
+            <p className="text-sm font-bold text-slate-500 dark:text-slate-400 mb-8 leading-relaxed">{confirmModal.text}</p>
+            <div className="flex gap-4">
+              <button onClick={()=>setConfirmModal({...confirmModal, isOpen:false})} className="flex-1 p-4 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-300 font-black rounded-xl uppercase text-[10px] tracking-widest">Cancel</button>
+              <button onClick={()=>{confirmModal.onConfirm(); setConfirmModal({...confirmModal, isOpen:false});}} className={`flex-1 p-4 text-white font-black rounded-xl uppercase text-[10px] tracking-widest transition-all ${confirmModal.type==='danger'?'bg-red-600 dark:bg-rose-600':'bg-blue-600'}`}>Confirm</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <QRMaker isOpen={isQrModalOpen} onClose={() => setIsQrModalOpen(false)} loggedInUser={loggedInUser} showToast={showToast} />
       <BillingMatcher isOpen={isBillingMatcherOpen} onClose={() => setIsBillingMatcherOpen(false)} showToast={showToast} />
       {toastMsg && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-xl font-black text-xs shadow-2xl z-[500] animate-in slide-in-from-bottom-10 flex items-center gap-3 tracking-widest italic uppercase"><Zap className="w-4 h-4 text-white"/> {toastMsg}</div>}
