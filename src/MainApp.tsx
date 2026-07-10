@@ -371,7 +371,6 @@ export default function MainApp() {
                   {isUnread && <span className="absolute top-4 left-2 w-3 h-3 bg-green-500 dark:bg-lime-500 rounded-full border-2 border-white dark:border-slate-900 animate-pulse"></span>}
                   {renderGauge(stepIdx, task.hasIssue)}
                   
-                  {/* 🟢 กู้คืน: โซนรายละเอียดงานและปุ่มถังขยะ */}
                   <div className="flex justify-between items-start mb-2 mt-2">
                     <h3 className={`text-sm leading-tight pr-6 line-clamp-2 ${selectedTaskId === task.id ? 'text-white font-black' : (isUnread ? 'text-slate-900 dark:text-white font-black' : 'text-slate-800 dark:text-slate-300 font-bold')}`}>{task.topic}</h3>
                     {loggedInUser?.role === 'Admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
@@ -381,7 +380,6 @@ export default function MainApp() {
                     <div className="flex items-center gap-1"><Users className="w-3 h-3"/> {(task.relatedPersons || []).length} คน</div>
                   </div>
                   
-                  {/* 🟢 กู้คืน: แถบสถานะด้านล่างสุด + วันกำหนดส่ง */}
                   <div className={`flex justify-between items-center mt-3 pt-3 border-t ${selectedTaskId === task.id ? 'border-white/20' : 'border-slate-200 dark:border-slate-700/50'}`}>
                     <div className={`text-[10px] font-black uppercase tracking-tight flex items-center gap-1 ${task.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : (selectedTaskId === task.id ? 'text-white' : stepData.text)}`}>
                         {task.hasIssue ? <AlertTriangle className="w-3.5 h-3.5"/> : stepData.icon} {task.hasIssue ? 'CRITICAL ISSUE!' : stepData.label}
@@ -398,13 +396,21 @@ export default function MainApp() {
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             
-            {/* Mission Header & Status Bar */}
+            {/* 🟢 Mission Header & Status Bar (กู้คืนรายละเอียด) */}
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1 pr-4">
                   <button onClick={() => setSelectedTaskId(null)} className="md:hidden text-blue-600 font-black text-[10px] flex items-center gap-1 mb-3 uppercase"><ArrowLeft className="w-3 h-3"/> Back</button>
                   <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-3 italic uppercase">{selectedTask.topic}</h2>
                   {selectedTask.documentNo && <div className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1 rounded-md text-xs font-black mb-3 border tracking-widest"><FileText className="w-3 h-3"/> REF: {selectedTask.documentNo}</div>}
+                  
+                  {/* 🟢 กู้คืน: รายละเอียดงาน (Briefing) และ ข้อมูลผู้สั่ง/เวลา (Metadata) */}
+                  {selectedTask.details && <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mb-3 whitespace-pre-wrap shadow-inner">{selectedTask.details}</div>}
+                  <div className="flex flex-wrap gap-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                    <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-blue-500"/> OP: <span className="text-slate-600 dark:text-slate-300">{selectedTask.requester}</span></span>
+                    <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-amber-500"/> TGT: <span className="text-amber-500 dark:text-amber-400">{selectedTask.dueDate}</span></span>
+                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-emerald-500"/> เริ่ม: <span className="text-emerald-600 dark:text-emerald-400">{selectedTask.createdAt?.toDate ? selectedTask.createdAt.toDate().toLocaleString('th-TH', {dateStyle: 'short', timeStyle: 'short'}) : 'กำลังบันทึก...'}</span></span>
+                  </div>
                 </div>
                 <div className="flex flex-col gap-2 shrink-0">
                   {selectedTask.requester === loggedInUser?.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black hover:bg-black transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
