@@ -6,12 +6,29 @@ import {
   Search, CheckCircle2, Clock, 
   Paperclip, Send, AlertTriangle, ArrowLeft,
   MessageSquare, User, Plus, Loader2, LogOut, X, Package, CalendarDays, Trash2, Users, UserPlus, FileText, Filter,
-  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck
+  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck, Flame
 } from 'lucide-react';
 import QRMaker from './QRMaker'; 
 import BillingMatcher from './BillingMatcher'; 
 
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbym2Jl1qlXHqaNJq7S0TbhhsXegSDAPwIzf7h8_q08rOkkyY60G4UWy_NeHVsFIenCO/exec';
+
+// 🟢 Helper Function: เช็คงานเลยกำหนด
+const checkOverdue = (dueDateStr: string) => {
+  if (!dueDateStr) return false;
+  const due = new Date(dueDateStr);
+  due.setHours(23, 59, 59, 999);
+  return new Date() > due;
+};
+
+// 🟢 Helper Function: เช็คคอขวด (ระยะห่างของคนเร็วสุดกับช้าสุด >= 2 สเต็ป)
+const checkBottleneck = (individualStatus: any) => {
+  const vals = Object.values(individualStatus || {}) as number[];
+  if (vals.length < 2) return false;
+  const max = Math.max(...vals);
+  const min = Math.min(...vals);
+  return max >= 2 && min <= 1 && (max - min >= 2);
+};
 
 export default function MainApp() {
   const [loggedInUser, setLoggedInUser] = useState<any>(null);
@@ -46,6 +63,7 @@ export default function MainApp() {
   const [confirmModal, setConfirmModal] = useState<{isOpen: boolean, title: string, text: string, type: 'danger' | 'warning' | 'info', onConfirm: () => void}>({ 
     isOpen: false, title: '', text: '', type: 'info', onConfirm: () => {} 
   });
+  
   const [settings, setSettings] = useState({ users: [], topicMapping: {} });
   const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '' });
 
@@ -79,7 +97,16 @@ export default function MainApp() {
 
   useEffect(() => {
     const fetchMasterData = async () => {
-      try { const res = await fetch(WEB_APP_URL); const data = await res.json(); if (data && data.settings) setSettings({ users: data.settings.users || [], topicMapping: data.settings.topicMapping || {} }); } 
+      try { 
+        const res = await fetch(WEB_APP_URL); 
+        const data = await res.json(); 
+        if (data && data.settings) {
+          setSettings({ 
+            users: data.settings.users || [], 
+            topicMapping: data.settings.topicMapping || {}
+          }); 
+        } 
+      } 
       catch (e) { setSettings({ users: ['อภิสิทธิ์', 'แอดมิน'], topicMapping: {} }); }
     };
     try { const savedUser = localStorage.getItem('stp_user_session'); if (savedUser) setLoggedInUser(JSON.parse(savedUser)); } catch (e) { localStorage.removeItem('stp_user_session'); }
@@ -265,6 +292,69 @@ export default function MainApp() {
     );
   };
 
+  // 🟢 แสดงความคืบหน้ารายบุคคลแบบ "วงกลมตัวอักษร 3 ตัวแรก" 
+  const renderAvatarProgress = (task: any, isSelected: boolean) => {
+    const persons = task.relatedPersons || [];
+    if (persons.length === 0) return null;
+
+    const isTaskOverdue = checkOverdue(task.dueDate);
+    const isTaskBottleneck = checkBottleneck(task.individualStatus);
+    const minStep = Math.min(...(Object.values(task.individualStatus || {0:0}) as number[]));
+
+    return (
+      <div className="mt-4 mb-2">
+        <div className="flex justify-between items-end mb-2 px-0.5">
+          <span className={`text-[9px] font-black uppercase tracking-widest ${isSelected ? 'text-blue-200' : 'text-slate-400'}`}>Driver Sync</span>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {persons.map((p: string, idx: number) => {
+            const step = task.individualStatus?.[p] || 0;
+            const isMe = p === loggedInUser?.name;
+            
+            // 🟢 ดึง 3 ตัวแรกจากชื่อตรงๆ เลย
+            const shortName = p.substring(0, 3).toUpperCase();
+            
+            let bgColor = 'bg-slate-400 dark:bg-slate-600'; 
+            if (step === 1) bgColor = 'bg-sky-500';
+            if (step === 2) bgColor = 'bg-amber-500';
+            if (step === 3) bgColor = 'bg-green-500';
+
+            let ringEffect = '';
+            let animation = '';
+            let borderColor = 'border-white/20 dark:border-black/20';
+
+            if (task.hasIssue && task.issueReporter === p) {
+                bgColor = 'bg-red-600';
+                animation = 'animate-pulse';
+                ringEffect = 'ring-2 ring-red-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_8px_red]';
+            } else if (isTaskOverdue && step < 3) {
+                bgColor = 'bg-rose-600';
+                animation = 'animate-pulse';
+                ringEffect = 'ring-1 ring-rose-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_5px_#e11d48]';
+            } else if (isTaskBottleneck && step === minStep && step < 3) {
+                ringEffect = 'ring-2 ring-orange-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_8px_#fb923c]';
+            }
+
+            if (isMe) {
+               ringEffect += ' ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-slate-800 scale-110 z-10';
+               borderColor = 'border-blue-200 dark:border-blue-400';
+            }
+
+            return (
+              <div 
+                key={idx} 
+                title={`${p} - ${steps[step]?.label || ''}`}
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black text-white ${bgColor} ${animation} ${ringEffect} transition-all duration-300 border ${borderColor} cursor-help`}
+              >
+                {shortName}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
   const processedTasks = tasks.filter(t => {
     if (t.isArchived) return false;
     const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'Admin';
@@ -361,30 +451,54 @@ export default function MainApp() {
             {processedTasks.map(task => {
                const isMyOrder = task.requester === loggedInUser?.name;
                const isUnread = (task.unreadBy || []).includes(loggedInUser?.name);
-               const stepIdx = (task.currentStep >= 0 && task.currentStep <= 3) ? task.currentStep : 0;
-               const stepData = steps[stepIdx] || steps[0];
+               const isSelected = selectedTaskId === task.id;
+               
+               const isTaskOverdue = checkOverdue(task.dueDate) && (task.currentStep || 0) < 3;
+               const isBottleneck = checkBottleneck(task.individualStatus) && (task.currentStep || 0) < 3;
+               
                let cardStyle = "bg-white border-transparent hover:border-slate-300 dark:bg-slate-900 dark:border-slate-800"; 
-               if (selectedTaskId === task.id) cardStyle = "bg-blue-600 border-blue-700 dark:bg-slate-800 dark:border-blue-500 shadow-xl -translate-y-1";
-               else if (isMyOrder) cardStyle = "bg-amber-50 border-amber-200 hover:border-amber-300 dark:bg-slate-900 dark:border-amber-500/40";
+               
+               if (isSelected) {
+                   cardStyle = "bg-blue-600 border-blue-700 dark:bg-slate-800 dark:border-blue-500 shadow-xl -translate-y-1";
+               } else if (task.hasIssue) {
+                   cardStyle = "bg-red-50 border-red-300 dark:bg-rose-950/20 dark:border-rose-500/50 shadow-[0_0_10px_rgba(225,29,72,0.3)]";
+               } else if (isTaskOverdue) {
+                   cardStyle = "bg-rose-50 border-rose-300 dark:bg-rose-950/10 dark:border-rose-500/40 shadow-sm"; 
+               } else if (isBottleneck) {
+                   cardStyle = "bg-orange-50 border-orange-300 dark:bg-orange-950/20 dark:border-orange-500/50 shadow-[0_0_10px_rgba(249,115,22,0.2)]"; 
+               } else if (isMyOrder) {
+                   cardStyle = "bg-amber-50 border-amber-200 hover:border-amber-300 dark:bg-slate-900 dark:border-amber-500/40";
+               }
+               
+               const personsCount = (task.relatedPersons || []).length;
+               const completedCount = (task.relatedPersons || []).filter((p:string) => task.individualStatus?.[p] === 3).length;
+
                return (
                 <div key={task.id} onClick={() => setSelectedTaskId(task.id)} className={`p-4 rounded-2xl border-2 dark:border cursor-pointer relative group transition-all duration-200 ${cardStyle}`}>
                   {isUnread && <span className="absolute top-4 left-2 w-3 h-3 bg-green-500 dark:bg-lime-500 rounded-full border-2 border-white dark:border-slate-900 animate-pulse"></span>}
-                  {renderGauge(stepIdx, task.hasIssue)}
                   
+                  <div className="absolute -top-3 right-4 flex gap-1">
+                      {isTaskOverdue && !isSelected && <span className="bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-md animate-pulse">OVERDUE</span>}
+                      {isBottleneck && !isSelected && <span className="bg-orange-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-md flex items-center gap-0.5"><Flame className="w-2.5 h-2.5"/> คอขวด</span>}
+                  </div>
+
                   <div className="flex justify-between items-start mb-2 mt-2">
-                    <h3 className={`text-sm leading-tight pr-6 line-clamp-2 ${selectedTaskId === task.id ? 'text-white font-black' : (isUnread ? 'text-slate-900 dark:text-white font-black' : 'text-slate-800 dark:text-slate-300 font-bold')}`}>{task.topic}</h3>
+                    <h3 className={`text-sm leading-tight pr-6 line-clamp-2 ${isSelected ? 'text-white font-black' : (isUnread ? 'text-slate-900 dark:text-white font-black' : 'text-slate-800 dark:text-slate-300 font-bold')}`}>{task.topic}</h3>
                     {loggedInUser?.role === 'Admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
                   </div>
-                  <div className={`flex items-center gap-3 mt-3 text-[10px] ${selectedTaskId === task.id ? 'text-blue-100' : 'text-slate-500'}`}>
+                  <div className={`flex items-center gap-3 mt-3 text-[10px] ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
                     <div className="flex items-center gap-1"><User className="w-3 h-3"/> สั่งโดย: <span className="font-bold underline">{task.requester}</span></div>
-                    <div className="flex items-center gap-1"><Users className="w-3 h-3"/> {(task.relatedPersons || []).length} คน</div>
+                    <div className="flex items-center gap-1"><Users className="w-3 h-3"/> {personsCount} คน</div>
                   </div>
                   
-                  <div className={`flex justify-between items-center mt-3 pt-3 border-t ${selectedTaskId === task.id ? 'border-white/20' : 'border-slate-200 dark:border-slate-700/50'}`}>
-                    <div className={`text-[10px] font-black uppercase tracking-tight flex items-center gap-1 ${task.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : (selectedTaskId === task.id ? 'text-white' : stepData.text)}`}>
-                        {task.hasIssue ? <AlertTriangle className="w-3.5 h-3.5"/> : stepData.icon} {task.hasIssue ? 'CRITICAL ISSUE!' : stepData.label}
+                  {renderAvatarProgress(task, isSelected)}
+                  
+                  <div className={`flex justify-between items-center mt-3 pt-3 border-t ${isSelected ? 'border-white/20' : 'border-slate-200 dark:border-slate-700/50'}`}>
+                    <div className={`text-[9px] font-black uppercase tracking-tight flex items-center gap-1 ${task.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : (isSelected ? 'text-blue-200' : 'text-slate-400')}`}>
+                        {task.hasIssue ? <AlertTriangle className="w-3.5 h-3.5"/> : <CheckCircle2 className="w-3.5 h-3.5"/>} 
+                        {task.hasIssue ? 'CRITICAL ISSUE!' : `${completedCount}/${personsCount} COMPLETED`}
                     </div>
-                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border tracking-wider ${selectedTaskId === task.id ? 'bg-white/20 border-transparent text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-transparent dark:border-slate-700'}`}>🏁 {task.dueDate}</span>
+                    <span className={`text-[9px] font-black px-2 py-0.5 rounded-md border tracking-wider ${isSelected ? 'bg-white/20 border-transparent text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-transparent dark:border-slate-700'}`}>🏁 {task.dueDate}</span>
                   </div>
                 </div>
               );
@@ -396,7 +510,6 @@ export default function MainApp() {
         {selectedTask ? (
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             
-            {/* 🟢 Mission Header & Status Bar (กู้คืนรายละเอียด) */}
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md">
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1 pr-4">
@@ -404,7 +517,6 @@ export default function MainApp() {
                   <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-3 italic uppercase">{selectedTask.topic}</h2>
                   {selectedTask.documentNo && <div className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1 rounded-md text-xs font-black mb-3 border tracking-widest"><FileText className="w-3 h-3"/> REF: {selectedTask.documentNo}</div>}
                   
-                  {/* 🟢 กู้คืน: รายละเอียดงาน (Briefing) และ ข้อมูลผู้สั่ง/เวลา (Metadata) */}
                   {selectedTask.details && <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mb-3 whitespace-pre-wrap shadow-inner">{selectedTask.details}</div>}
                   <div className="flex flex-wrap gap-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
                     <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-blue-500"/> OP: <span className="text-slate-600 dark:text-slate-300">{selectedTask.requester}</span></span>
@@ -433,18 +545,38 @@ export default function MainApp() {
                     <button onClick={() => setIsAddPersonModalOpen(true)} className="p-1.5 bg-white dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg border border-slate-200 dark:border-blue-500/30 hover:bg-slate-100 dark:hover:bg-blue-800/50 transition-all shadow-sm"><UserPlus className="w-4 h-4"/></button>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {(selectedTask.relatedPersons || []).map((p: string) => {
-                      const pStepIdx = (selectedTask.individualStatus?.[p] >= 0 && selectedTask.individualStatus?.[p] <= 3) ? selectedTask.individualStatus[p] : 0;
-                      const pStepData = steps[pStepIdx] || steps[0];
-                      const isMe = p === loggedInUser?.name;
-                      return (
-                        <div key={p} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-black transition-all ${isMe ? 'bg-white dark:bg-slate-800 border-blue-400 dark:border-blue-500 text-slate-800 dark:text-white shadow-md' : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400'}`}>
-                          <span>{p}</span>
-                          <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase ${pStepData.color} text-white`}>{pStepData.icon} {pStepData.label}</div>
-                          {isMe && pStepIdx < 3 && <button onClick={advanceMyStep} className="bg-blue-600 text-white px-2 py-1 rounded shadow-sm hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase text-[9px] italic ml-1">BOOST ⚡</button>}
-                        </div>
-                      );
-                    })}
+                    {(() => {
+                        const isTaskOverdue = checkOverdue(selectedTask.dueDate);
+                        const isBottleneck = checkBottleneck(selectedTask.individualStatus);
+                        const minStep = Math.min(...(Object.values(selectedTask.individualStatus || {0:0}) as number[]));
+                        
+                        return (selectedTask.relatedPersons || []).map((p: string) => {
+                          const pStepIdx = (selectedTask.individualStatus?.[p] >= 0 && selectedTask.individualStatus?.[p] <= 3) ? selectedTask.individualStatus[p] : 0;
+                          const pStepData = steps[pStepIdx] || steps[0];
+                          const isMe = p === loggedInUser?.name;
+                          
+                          let badgeWrapperStyle = isMe ? 'bg-white dark:bg-slate-800 border-blue-400 dark:border-blue-500 text-slate-800 dark:text-white shadow-md' : 'bg-slate-100 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400';
+                          let badgeColor = pStepData.color;
+
+                          if (selectedTask.hasIssue && selectedTask.issueReporter === p) {
+                              badgeWrapperStyle = 'bg-red-50 border-red-500 text-red-700 animate-pulse shadow-[0_0_10px_red]';
+                              badgeColor = 'bg-red-600';
+                          } else if (isTaskOverdue && pStepIdx < 3) {
+                              badgeWrapperStyle = 'bg-rose-50 border-rose-500 text-rose-700 dark:bg-rose-950/30 dark:border-rose-500 animate-pulse shadow-[0_0_8px_#e11d48]';
+                              badgeColor = 'bg-rose-600';
+                          } else if (isBottleneck && pStepIdx === minStep && pStepIdx < 3) {
+                              badgeWrapperStyle += ' ring-2 ring-orange-400 ring-offset-1 dark:ring-offset-slate-950 shadow-[0_0_10px_#fb923c]';
+                          }
+
+                          return (
+                            <div key={p} className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs font-black transition-all ${badgeWrapperStyle}`}>
+                              <span>{p}</span>
+                              <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase ${badgeColor} text-white`}>{pStepData.icon} {pStepData.label}</div>
+                              {isMe && pStepIdx < 3 && <button onClick={advanceMyStep} className="bg-blue-600 text-white px-2 py-1 rounded shadow-sm hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase text-[9px] italic ml-1">BOOST ⚡</button>}
+                            </div>
+                          );
+                        });
+                    })()}
                   </div>
                 </div>
               </div>
