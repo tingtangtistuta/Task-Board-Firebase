@@ -292,7 +292,6 @@ export default function MainApp() {
     );
   };
 
-  // 🟢 แสดงความคืบหน้ารายบุคคลแบบ "วงกลมตัวอักษร 3 ตัวแรก" 
   const renderAvatarProgress = (task: any, isSelected: boolean) => {
     const persons = task.relatedPersons || [];
     if (persons.length === 0) return null;
@@ -310,8 +309,6 @@ export default function MainApp() {
           {persons.map((p: string, idx: number) => {
             const step = task.individualStatus?.[p] || 0;
             const isMe = p === loggedInUser?.name;
-            
-            // 🟢 ดึง 3 ตัวแรกจากชื่อตรงๆ เลย
             const shortName = p.substring(0, 3).toUpperCase();
             
             let bgColor = 'bg-slate-400 dark:bg-slate-600'; 
@@ -355,15 +352,52 @@ export default function MainApp() {
     );
   };
 
+  // 🟢 Helper UI: ปุ่มตัวเลือกในเมนู Filter
+  const renderFilterChip = (label: string, val: string, defaultStyle = "bg-white text-slate-600 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700", activeStyle = "bg-blue-600 text-white border-blue-600 shadow-md") => {
+    const isActive = filterStatus === val;
+    return (
+      <button 
+        onClick={() => setFilterStatus(val)}
+        className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-tight transition-all ${isActive ? activeStyle : defaultStyle + ' hover:border-slate-400'}`}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  // 🟢 ตัวกรองอัจฉริยะ (รวมกระบวนการ & ความเร่งด่วน)
   const processedTasks = tasks.filter(t => {
     if (t.isArchived) return false;
     const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'Admin';
     if (!isRelated) return false; 
-    const safeTopic = (t.topic || '').toString().toLowerCase(); const safeDocNo = (t.documentNo || '').toString().toLowerCase(); const q = searchQuery.toLowerCase();
+    
+    const safeTopic = (t.topic || '').toString().toLowerCase(); 
+    const safeDocNo = (t.documentNo || '').toString().toLowerCase(); 
+    const q = searchQuery.toLowerCase();
     if (searchQuery && !(safeTopic.includes(q) || safeDocNo.includes(q))) return false;
+    
     if (filterRequester !== 'All' && t.requester !== filterRequester) return false;
     if (filterPerson !== 'All' && !(t.relatedPersons || []).includes(filterPerson)) return false;
-    if (filterStatus !== 'All' && (t.currentStep || 0).toString() !== filterStatus) return false;
+    
+    // 🟢 ตรรกะ Filter ใหม่
+    if (filterStatus !== 'All') {
+        const step = t.currentStep || 0;
+        
+        if (filterStatus === 'Issue' && !t.hasIssue) return false;
+        
+        if (filterStatus === 'Overdue') {
+            const isTaskOverdue = checkOverdue(t.dueDate) && step < 3;
+            if (!isTaskOverdue) return false;
+        }
+        
+        if (filterStatus === 'Bottleneck') {
+            const isTaskBottleneck = checkBottleneck(t.individualStatus) && step < 3;
+            if (!isTaskBottleneck) return false;
+        }
+        
+        if (['0', '1', '2', '3'].includes(filterStatus) && step.toString() !== filterStatus) return false;
+    }
+    
     return true;
   }).sort((a, b) => sortBy === 'status' ? (a.currentStep || 0) - (b.currentStep || 0) : 0);
 
@@ -439,13 +473,47 @@ export default function MainApp() {
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
               <input type="text" placeholder="ค้นหาภารกิจ / บิล..." className="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
-            <div className="flex gap-2">
-              <button onClick={() => setShowFilters(!showFilters)} className={`flex-1 text-[10px] font-black uppercase flex items-center justify-center gap-2 py-2 rounded-lg border transition-all ${showFilters || filterRequester !== 'All' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 border-blue-200' : 'bg-white dark:bg-slate-950 border-slate-200 text-slate-500'}`}><Filter className="w-3 h-3"/> Filter</button>
-              <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="flex-1 text-[10px] font-black uppercase bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-lg px-2 outline-none cursor-pointer">
-                <option value="latest">Sort: ล่าสุด</option>
-                <option value="status">Sort: ตามสถานะ</option>
-              </select>
+            
+            {/* 🟢 คอนโทรลปุ่ม Filter และเมนู Dropdown */}
+            <div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={() => setShowFilters(!showFilters)} 
+                  className={`flex-1 text-[10px] font-black uppercase flex items-center justify-center gap-2 py-2 rounded-lg border transition-all ${showFilters || filterStatus !== 'All' ? 'bg-blue-50 dark:bg-blue-900/30 text-blue-600 border-blue-200' : 'bg-white dark:bg-slate-950 border-slate-200 text-slate-500 hover:bg-slate-50'}`}
+                >
+                  <Filter className="w-3 h-3"/> Filter {filterStatus !== 'All' && '(1)'}
+                </button>
+                <select value={sortBy} onChange={e => setSortBy(e.target.value)} className="flex-1 text-[10px] font-black uppercase bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 rounded-lg px-2 outline-none cursor-pointer">
+                  <option value="latest">Sort: ล่าสุด</option>
+                  <option value="status">Sort: ตามสถานะ</option>
+                </select>
+              </div>
+
+              {/* 🟢 แผงเมนู Filter ที่เลื่อนกางลงมา */}
+              {showFilters && (
+                <div className="bg-slate-100 dark:bg-slate-950/50 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mt-3 space-y-3 animate-in fade-in slide-in-from-top-2">
+                  <div>
+                    <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2">ตามกระบวนการ</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {renderFilterChip('ทั้งหมด', 'All')}
+                      {renderFilterChip('รอรับงาน', '0')}
+                      {renderFilterChip('รับเรื่อง', '1')}
+                      {renderFilterChip('ดำเนินการ', '2')}
+                      {renderFilterChip('เสร็จสิ้น', '3')}
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div className="text-[9px] font-black uppercase text-slate-400 tracking-widest mb-2">ความเร่งด่วน</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {renderFilterChip('เลยกำหนด', 'Overdue', 'bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-950/30 dark:border-rose-800', 'bg-rose-600 text-white border-rose-600 shadow-[0_0_8px_#e11d48]')}
+                      {renderFilterChip('คอขวด', 'Bottleneck', 'bg-orange-50 text-orange-600 border-orange-200 dark:bg-orange-950/30 dark:border-orange-800', 'bg-orange-500 text-white border-orange-500 shadow-[0_0_8px_#f97316]')}
+                      {renderFilterChip('แจ้งปัญหา', 'Issue', 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950/30 dark:border-red-800', 'bg-red-600 text-white border-red-600 shadow-[0_0_8px_#dc2626]')}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
+
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-slate-100/50 dark:bg-slate-950 transition-colors">
             {processedTasks.map(task => {
