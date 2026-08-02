@@ -256,7 +256,7 @@ export default function MainApp() {
   };
 
   const deleteTask = async (tId: string, e: any) => {
-    e.stopPropagation(); if (loggedInUser?.role !== 'Admin') return showToast('❌ สิทธิ์เข้าถึงถูกปฏิเสธ');
+    e.stopPropagation(); if (loggedInUser?.role !== 'admin') return showToast('❌ สิทธิ์เข้าถึงถูกปฏิเสธ');
     setConfirmModal({ isOpen: true, title: 'ลบข้อมูลถาวร', text: '🚨 ลบข้อมูลภารกิจนี้ทิ้งถาวร ยืนยันหรือไม่?', type: 'danger', onConfirm: async () => {
       try { await deleteDoc(doc(db, 'tasks', tId)); if (selectedTaskId === tId) setSelectedTaskId(null); } catch(e) {}
     }});
@@ -352,7 +352,7 @@ export default function MainApp() {
     );
   };
 
-  // 🟢 Helper UI: ปุ่มตัวเลือกในเมนู Filter
+  // 🟢 Helper UI: ปุ่มตัวเลือกในเมนู Filter
   const renderFilterChip = (label: string, val: string, defaultStyle = "bg-white text-slate-600 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700", activeStyle = "bg-blue-600 text-white border-blue-600 shadow-md") => {
     const isActive = filterStatus === val;
     return (
@@ -368,7 +368,7 @@ export default function MainApp() {
   // 🟢 ตัวกรองอัจฉริยะ (รวมกระบวนการ & ความเร่งด่วน)
   const processedTasks = tasks.filter(t => {
     if (t.isArchived) return false;
-    const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'Admin';
+    const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'admin';
     if (!isRelated) return false; 
     
     const safeTopic = (t.topic || '').toString().toLowerCase(); 
@@ -434,14 +434,21 @@ export default function MainApp() {
             <div className="text-[10px] font-black uppercase text-blue-400 tracking-widest">{loggedInUser?.role || 'User'}</div>
             <div className="text-sm font-bold text-white">{loggedInUser?.name || ''}</div>
           </div>
-          <button onClick={() => setIsBillingMatcherOpen(true)} className="bg-indigo-600 border border-indigo-500 p-2.5 rounded-xl transition-all text-white shadow-md hover:bg-indigo-500 group relative">
-            <FileSearch className="w-5 h-5"/>
-            <span className="absolute -bottom-6 right-0 bg-black/80 text-white text-[9px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">Billing Matcher</span>
-          </button>
-          <button onClick={() => setIsQrModalOpen(true)} className="bg-blue-600 border border-blue-500 p-2.5 rounded-xl transition-all text-white shadow-md hover:bg-blue-500 group relative">
-            <QrCode className="w-5 h-5"/>
-            <span className="absolute -bottom-6 right-0 bg-black/80 text-white text-[9px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">QR Maker</span>
-          </button>
+          
+          {/* 🟢 ซ่อนปุ่ม 2 ปุ่มนี้ ถ้า Role เป็น customer */}
+          {loggedInUser?.role !== 'customer' && (
+            <>
+              <button onClick={() => setIsBillingMatcherOpen(true)} className="bg-indigo-600 border border-indigo-500 p-2.5 rounded-xl transition-all text-white shadow-md hover:bg-indigo-500 group relative">
+                <FileSearch className="w-5 h-5"/>
+                <span className="absolute -bottom-6 right-0 bg-black/80 text-white text-[9px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">Billing Matcher</span>
+              </button>
+              <button onClick={() => setIsQrModalOpen(true)} className="bg-blue-600 border border-blue-500 p-2.5 rounded-xl transition-all text-white shadow-md hover:bg-blue-500 group relative">
+                <QrCode className="w-5 h-5"/>
+                <span className="absolute -bottom-6 right-0 bg-black/80 text-white text-[9px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap">QR Maker</span>
+              </button>
+            </>
+          )}
+
           <button onClick={toggleTheme} className="bg-white/10 p-2.5 rounded-xl transition-all text-amber-300 dark:text-blue-400">
             {isDarkMode ? <Sun className="w-5 h-5"/> : <Moon className="w-5 h-5"/>}
           </button>
@@ -552,7 +559,7 @@ export default function MainApp() {
 
                   <div className="flex justify-between items-start mb-2 mt-2">
                     <h3 className={`text-sm leading-tight pr-6 line-clamp-2 ${isSelected ? 'text-white font-black' : (isUnread ? 'text-slate-900 dark:text-white font-black' : 'text-slate-800 dark:text-slate-300 font-bold')}`}>{task.topic}</h3>
-                    {loggedInUser?.role === 'Admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
+                    {loggedInUser?.role === 'admin' && <button onClick={e => deleteTask(task.id, e)} className="text-red-400 hover:text-red-600 dark:text-rose-500 dark:hover:text-rose-400 opacity-0 group-hover:opacity-100 p-1"><Trash2 className="w-4 h-4"/></button>}
                   </div>
                   <div className={`flex items-center gap-3 mt-3 text-[10px] ${isSelected ? 'text-blue-100' : 'text-slate-500'}`}>
                     <div className="flex items-center gap-1"><User className="w-3 h-3"/> สั่งโดย: <span className="font-bold underline">{task.requester}</span></div>
@@ -595,7 +602,7 @@ export default function MainApp() {
                 <div className="flex flex-col gap-2 shrink-0">
                   {selectedTask.requester === loggedInUser?.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black hover:bg-black transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
                   {selectedTask.hasIssue ? (
-                    <button onClick={resolveIssue} disabled={selectedTask.issueReporter === loggedInUser?.name && loggedInUser?.role !== 'Admin'} className="px-4 py-2.5 rounded-xl text-xs font-black border border-emerald-500/50 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 flex items-center justify-center gap-1.5 transition-all"><CheckCircle2 className="w-3.5 h-3.5"/> เคลียร์ปัญหา</button>
+                    <button onClick={resolveIssue} disabled={selectedTask.issueReporter === loggedInUser?.name && loggedInUser?.role !== 'admin'} className="px-4 py-2.5 rounded-xl text-xs font-black border border-emerald-500/50 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 flex items-center justify-center gap-1.5 transition-all"><CheckCircle2 className="w-3.5 h-3.5"/> เคลียร์ปัญหา</button>
                   ) : (
                     <button onClick={reportIssue} disabled={(selectedTask.currentStep || 0) >= 3} className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 text-red-500 bg-red-50 hover:bg-red-100 flex items-center justify-center gap-1.5 transition-all"><AlertTriangle className="w-3.5 h-3.5"/> PIT STOP</button>
                   )}
@@ -654,7 +661,7 @@ export default function MainApp() {
             <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-transparent z-10 transition-colors">
               {(chats[selectedTaskId!] || []).map((c: any) => {
                 const isMe = c.sender === loggedInUser?.name;
-                const isAdmin = loggedInUser?.role === 'Admin';
+                const isAdmin = loggedInUser?.role === 'admin';
                 const isImage = c.fileName && isImageFile(c.fileName);
                 const isRead = !((selectedTask?.unreadBy || []).length > 0); 
                 
