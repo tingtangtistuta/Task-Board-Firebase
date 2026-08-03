@@ -6,14 +6,13 @@ import {
   Search, CheckCircle2, Clock, 
   Paperclip, Send, AlertTriangle, ArrowLeft,
   MessageSquare, User, Plus, Loader2, LogOut, X, Package, CalendarDays, Trash2, Users, UserPlus, FileText, Filter,
-  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck, Flame
+  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck, Flame, Shield, Globe
 } from 'lucide-react';
 import QRMaker from './QRMaker'; 
 import BillingMatcher from './BillingMatcher'; 
 
 const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbym2Jl1qlXHqaNJq7S0TbhhsXegSDAPwIzf7h8_q08rOkkyY60G4UWy_NeHVsFIenCO/exec';
 
-// 🟢 Helper Function: เช็คงานเลยกำหนด
 const checkOverdue = (dueDateStr: string) => {
   if (!dueDateStr) return false;
   const due = new Date(dueDateStr);
@@ -21,7 +20,6 @@ const checkOverdue = (dueDateStr: string) => {
   return new Date() > due;
 };
 
-// 🟢 Helper Function: เช็คคอขวด (ระยะห่างของคนเร็วสุดกับช้าสุด >= 2 สเต็ป)
 const checkBottleneck = (individualStatus: any) => {
   const vals = Object.values(individualStatus || {}) as number[];
   if (vals.length < 2) return false;
@@ -64,8 +62,8 @@ export default function MainApp() {
     isOpen: false, title: '', text: '', type: 'info', onConfirm: () => {} 
   });
   
-  const [settings, setSettings] = useState({ users: [], topicMapping: {} });
-  const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '' });
+  const [settings, setSettings] = useState<any>({ users: [], usersData: [], topicMapping: {} });
+  const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '', taskType: 'Internal' });
 
   const steps = [
     { label: 'รอรับงาน', icon: <Clock className="w-3.5 h-3.5" />, color: 'bg-slate-400 dark:bg-slate-600 dark:shadow-[0_0_5px_#475569]', text: 'text-slate-500 dark:text-slate-400' },
@@ -103,11 +101,12 @@ export default function MainApp() {
         if (data && data.settings) {
           setSettings({ 
             users: data.settings.users || [], 
+            usersData: data.settings.usersData || [], 
             topicMapping: data.settings.topicMapping || {}
           }); 
         } 
       } 
-      catch (e) { setSettings({ users: ['อภิสิทธิ์', 'แอดมิน'], topicMapping: {} }); }
+      catch (e) { setSettings({ users: ['อภิสิทธิ์', 'แอดมิน'], usersData: [], topicMapping: {} }); }
     };
     try { const savedUser = localStorage.getItem('stp_user_session'); if (savedUser) setLoggedInUser(JSON.parse(savedUser)); } catch (e) { localStorage.removeItem('stp_user_session'); }
     fetchMasterData();
@@ -151,16 +150,35 @@ export default function MainApp() {
 
   const handleCreateTask = async (e: any) => {
     e.preventDefault();
-    if (!newTask.topic || newTask.relatedPersons.length === 0 || !newTask.dueDate) return showToast('กรุณากรอกข้อมูลให้ครบถ้วน');
+    
+    // Auto-Routing: ถ้าเป็นลูกค้า ให้บังคับส่งหา 3 คนนี้ และล็อกเป็นงาน External
+    let finalRelatedPersons = newTask.relatedPersons;
+    let finalTaskType = newTask.taskType;
+
+    if (loggedInUser?.role === 'customer') {
+       finalRelatedPersons = ['ออม', 'คนึงคนสวย', 'พริ้มพลอย'];
+       finalTaskType = 'External';
+    }
+
+    if (!newTask.topic || finalRelatedPersons.length === 0 || !newTask.dueDate) return showToast('กรุณากรอกข้อมูลให้ครบถ้วน');
     setIsLoading(true);
     try {
-      const individualStatus: any = {}; newTask.relatedPersons.forEach(p => { individualStatus[p] = 0; });
+      const individualStatus: any = {}; 
+      finalRelatedPersons.forEach((p: string) => { individualStatus[p] = 0; });
+      
       const docRef = await addDoc(collection(db, 'tasks'), { 
-        ...newTask, requester: loggedInUser.name, individualStatus, unreadBy: [...newTask.relatedPersons].filter(p => p !== loggedInUser.name), 
+        ...newTask, 
+        taskType: finalTaskType, 
+        relatedPersons: finalRelatedPersons, 
+        requester: loggedInUser.name, 
+        individualStatus, 
+        unreadBy: [...finalRelatedPersons].filter(p => p !== loggedInUser.name), 
         currentStep: 0, hasIssue: false, issueReporter: null, isArchived: false, createdAt: serverTimestamp(), lastActivity: serverTimestamp() 
       });
-      await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 ภารกิจใหม่: ${newTask.topic}\n🔖 อ้างอิง: ${newTask.documentNo || '-'}\n📝 ข้อมูล: ${newTask.details || '-'}`, timestamp: serverTimestamp(), isSystem: true });
-      showToast('✅ สตาร์ทภารกิจสำเร็จ!'); setIsModalOpen(false); setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '' });
+      await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 ภารกิจใหม่: ${newTask.topic}\n🔖 ประเภท: ${finalTaskType === 'Internal' ? 'งานภายในบริษัท' : 'งานลูกค้า'}\n📝 ข้อมูล: ${newTask.details || '-'}`, timestamp: serverTimestamp(), isSystem: true });
+      showToast('✅ สตาร์ทภารกิจสำเร็จ!'); 
+      setIsModalOpen(false); 
+      setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '', taskType: 'Internal' });
     } catch { showToast('❌ สร้างงานล้มเหลว'); }
     setIsLoading(false);
   };
@@ -177,18 +195,8 @@ export default function MainApp() {
       }
       const txt = chatInput; 
       
-      const newChatData: any = { 
-        sender: loggedInUser.name, 
-        text: txt, 
-        fileUrl, 
-        fileName, 
-        timestamp: serverTimestamp(), 
-        isSystem: false 
-      };
-
-      if (replyingTo) {
-        newChatData.replyTo = { id: replyingTo.id, sender: replyingTo.sender, text: replyingTo.text, fileUrl: replyingTo.fileUrl };
-      }
+      const newChatData: any = { sender: loggedInUser.name, text: txt, fileUrl, fileName, timestamp: serverTimestamp(), isSystem: false };
+      if (replyingTo) { newChatData.replyTo = { id: replyingTo.id, sender: replyingTo.sender, text: replyingTo.text, fileUrl: replyingTo.fileUrl }; }
 
       await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), newChatData);
       
@@ -202,8 +210,7 @@ export default function MainApp() {
   const handleDeleteChat = async (chatId: string) => {
     if (!selectedTaskId) return;
     if (window.confirm("คุณต้องการลบข้อความนี้หรือไม่?")) {
-      try { await deleteDoc(doc(db, 'tasks', selectedTaskId, 'chats', chatId)); } 
-      catch(err) { showToast('❌ ลบข้อความล้มเหลว'); }
+      try { await deleteDoc(doc(db, 'tasks', selectedTaskId, 'chats', chatId)); } catch(err) { showToast('❌ ลบข้อความล้มเหลว'); }
     }
   };
 
@@ -235,7 +242,7 @@ export default function MainApp() {
     if (!selectedTask || !selectedTaskId) return;
     try {
       await updateDoc(doc(db, 'tasks', selectedTaskId), { hasIssue: false, issueReporter: null, lastActivity: serverTimestamp() });
-      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `✅ ${loggedInUser.name} แจ้งแก้ไขปัญหาของ ${selectedTask.issueReporter || 'ทีมงาน'} เรียบร้อยแล้ว!`, timestamp: serverTimestamp(), isSystem: true });
+      await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `✅ ${loggedInUser.name} แจ้งแก้ไขปัญหาเรียบร้อยแล้ว!`, timestamp: serverTimestamp(), isSystem: true });
     } catch(e) {}
   };
 
@@ -246,6 +253,23 @@ export default function MainApp() {
       await updateDoc(doc(db, 'tasks', selectedTaskId), { relatedPersons: newRelated, individualStatus: { ...(selectedTask.individualStatus || {}), [pName]: 0 }, currentStep: 0, lastActivity: serverTimestamp(), unreadBy: arrayUnion(...newRelated) });
       await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `➕ ${loggedInUser.name} ดึง "${pName}" เข้าสนาม`, timestamp: serverTimestamp(), isSystem: true });
     } catch(e) {}
+  };
+
+  const removePersonFromTask = async (pName: string) => {
+    if (!selectedTask || !selectedTaskId) return;
+    if (loggedInUser?.role !== 'admin' && loggedInUser?.name !== selectedTask.requester) {
+      return showToast('❌ คุณไม่มีสิทธิ์นำผู้ใช้อื่นออกจากงาน');
+    }
+    if (window.confirm(`ยืนยันการนำ "${pName}" ออกจากงานนี้?`)) {
+      const newRelated = (selectedTask.relatedPersons || []).filter((p: string) => p !== pName);
+      const newInd = { ...selectedTask.individualStatus };
+      delete newInd[pName]; 
+      try {
+        await updateDoc(doc(db, 'tasks', selectedTaskId), { relatedPersons: newRelated, individualStatus: newInd, lastActivity: serverTimestamp() });
+        await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { sender: 'System', text: `➖ ${loggedInUser.name} ได้นำ "${pName}" ออกจากภารกิจ`, timestamp: serverTimestamp(), isSystem: true });
+        showToast(`✅ นำ ${pName} ออกเรียบร้อย`);
+      } catch(e) { showToast('❌ เกิดข้อผิดพลาด'); }
+    }
   };
 
   const archiveTask = async () => {
@@ -267,16 +291,12 @@ export default function MainApp() {
     return timestamp.toDate().toLocaleString('th-TH', { day: '2-digit', month: 'short', year: '2-digit', hour: '2-digit', minute: '2-digit' });
   };
 
-  const isImageFile = (fileName: string) => {
-    return fileName?.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null;
-  };
+  const isImageFile = (fileName: string) => fileName?.match(/\.(jpeg|jpg|gif|png|webp)$/i) != null;
 
   const renderMessageTextWithMentions = (text: string) => {
     if (!text) return null;
     const parts = text.split(/(@\S+)/g);
-    return parts.map((part, i) => 
-      part.startsWith('@') ? <span key={i} className="text-amber-400 dark:text-blue-300 font-black">{part}</span> : part
-    );
+    return parts.map((part, i) => part.startsWith('@') ? <span key={i} className="text-amber-400 dark:text-blue-300 font-black">{part}</span> : part);
   };
 
   const renderGauge = (currentStep: number, hasIssue: boolean) => {
@@ -316,33 +336,20 @@ export default function MainApp() {
             if (step === 2) bgColor = 'bg-amber-500';
             if (step === 3) bgColor = 'bg-green-500';
 
-            let ringEffect = '';
-            let animation = '';
-            let borderColor = 'border-white/20 dark:border-black/20';
+            let ringEffect = ''; let animation = ''; let borderColor = 'border-white/20 dark:border-black/20';
 
             if (task.hasIssue && task.issueReporter === p) {
-                bgColor = 'bg-red-600';
-                animation = 'animate-pulse';
-                ringEffect = 'ring-2 ring-red-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_8px_red]';
+                bgColor = 'bg-red-600'; animation = 'animate-pulse'; ringEffect = 'ring-2 ring-red-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_8px_red]';
             } else if (isTaskOverdue && step < 3) {
-                bgColor = 'bg-rose-600';
-                animation = 'animate-pulse';
-                ringEffect = 'ring-1 ring-rose-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_5px_#e11d48]';
+                bgColor = 'bg-rose-600'; animation = 'animate-pulse'; ringEffect = 'ring-1 ring-rose-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_5px_#e11d48]';
             } else if (isTaskBottleneck && step === minStep && step < 3) {
                 ringEffect = 'ring-2 ring-orange-400 ring-offset-1 dark:ring-offset-slate-900 shadow-[0_0_8px_#fb923c]';
             }
 
-            if (isMe) {
-               ringEffect += ' ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-slate-800 scale-110 z-10';
-               borderColor = 'border-blue-200 dark:border-blue-400';
-            }
+            if (isMe) { ringEffect += ' ring-2 ring-blue-500 ring-offset-2 dark:ring-offset-slate-800 scale-110 z-10'; borderColor = 'border-blue-200 dark:border-blue-400'; }
 
             return (
-              <div 
-                key={idx} 
-                title={`${p} - ${steps[step]?.label || ''}`}
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black text-white ${bgColor} ${animation} ${ringEffect} transition-all duration-300 border ${borderColor} cursor-help`}
-              >
+              <div key={idx} title={`${p} - ${steps[step]?.label || ''}`} className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-black text-white ${bgColor} ${animation} ${ringEffect} transition-all duration-300 border ${borderColor} cursor-help`}>
                 {shortName}
               </div>
             );
@@ -352,22 +359,19 @@ export default function MainApp() {
     );
   };
 
-  // 🟢 Helper UI: ปุ่มตัวเลือกในเมนู Filter
   const renderFilterChip = (label: string, val: string, defaultStyle = "bg-white text-slate-600 border-slate-200 dark:bg-slate-900 dark:text-slate-300 dark:border-slate-700", activeStyle = "bg-blue-600 text-white border-blue-600 shadow-md") => {
     const isActive = filterStatus === val;
     return (
-      <button 
-        onClick={() => setFilterStatus(val)}
-        className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-tight transition-all ${isActive ? activeStyle : defaultStyle + ' hover:border-slate-400'}`}
-      >
+      <button onClick={() => setFilterStatus(val)} className={`px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-tight transition-all ${isActive ? activeStyle : defaultStyle + ' hover:border-slate-400'}`}>
         {label}
       </button>
     );
   };
 
-  // 🟢 ตัวกรองอัจฉริยะ (รวมกระบวนการ & ความเร่งด่วน)
   const processedTasks = tasks.filter(t => {
     if (t.isArchived) return false;
+    if (t.taskType === 'Internal' && loggedInUser?.role === 'customer') return false;
+
     const isRelated = (t.relatedPersons || []).includes(loggedInUser?.name) || t.requester === loggedInUser?.name || loggedInUser?.role === 'admin';
     if (!isRelated) return false; 
     
@@ -379,25 +383,13 @@ export default function MainApp() {
     if (filterRequester !== 'All' && t.requester !== filterRequester) return false;
     if (filterPerson !== 'All' && !(t.relatedPersons || []).includes(filterPerson)) return false;
     
-    // 🟢 ตรรกะ Filter ใหม่
     if (filterStatus !== 'All') {
         const step = t.currentStep || 0;
-        
         if (filterStatus === 'Issue' && !t.hasIssue) return false;
-        
-        if (filterStatus === 'Overdue') {
-            const isTaskOverdue = checkOverdue(t.dueDate) && step < 3;
-            if (!isTaskOverdue) return false;
-        }
-        
-        if (filterStatus === 'Bottleneck') {
-            const isTaskBottleneck = checkBottleneck(t.individualStatus) && step < 3;
-            if (!isTaskBottleneck) return false;
-        }
-        
+        if (filterStatus === 'Overdue') { if (!(checkOverdue(t.dueDate) && step < 3)) return false; }
+        if (filterStatus === 'Bottleneck') { if (!(checkBottleneck(t.individualStatus) && step < 3)) return false; }
         if (['0', '1', '2', '3'].includes(filterStatus) && step.toString() !== filterStatus) return false;
     }
-    
     return true;
   }).sort((a, b) => sortBy === 'status' ? (a.currentStep || 0) - (b.currentStep || 0) : 0);
 
@@ -418,6 +410,16 @@ export default function MainApp() {
   const safeGlobalStepIdx = (selectedTask?.currentStep >= 0 && selectedTask?.currentStep <= 3) ? selectedTask.currentStep : 0;
   const globalStepData = steps[safeGlobalStepIdx] || steps[0];
 
+  const getAvailableUsers = (forTaskType: string) => {
+    if (settings?.usersData && settings.usersData.length > 0) {
+      return settings.usersData.filter((u: any) => {
+        if (forTaskType === 'Internal' && u.role === 'customer') return false;
+        return true;
+      }).map((u: any) => u.name);
+    }
+    return settings?.users || [];
+  };
+
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col font-sans h-screen overflow-hidden text-slate-800 dark:text-slate-200 transition-colors duration-300">
       
@@ -435,7 +437,6 @@ export default function MainApp() {
             <div className="text-sm font-bold text-white">{loggedInUser?.name || ''}</div>
           </div>
           
-          {/* 🟢 ซ่อนปุ่ม 2 ปุ่มนี้ ถ้า Role เป็น customer */}
           {loggedInUser?.role !== 'customer' && (
             <>
               <button onClick={() => setIsBillingMatcherOpen(true)} className="bg-indigo-600 border border-indigo-500 p-2.5 rounded-xl transition-all text-white shadow-md hover:bg-indigo-500 group relative">
@@ -457,7 +458,6 @@ export default function MainApp() {
       </header>
 
       <div className="flex-1 flex overflow-hidden">
-        {/* --- Sidebar Missions --- */}
         <div className={`w-full md:w-1/3 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-colors ${selectedTaskId ? 'hidden md:flex' : 'flex'}`}>
           <div className="bg-slate-800 dark:bg-black text-white p-2.5 flex overflow-x-auto gap-3 items-center shrink-0 border-b border-slate-700">
             <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-2 shrink-0">DRIVER STATUS:</div>
@@ -474,6 +474,7 @@ export default function MainApp() {
           <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 space-y-4 shrink-0">
             <div className="flex justify-between items-center">
               <h2 className="font-black text-slate-800 dark:text-white text-lg tracking-tight italic uppercase">Missions ({processedTasks.length})</h2>
+              {/* เปิดให้ลูกค้าเห็นปุ่มสั่งงานได้ด้วยตามที่คุยกัน */}
               <button onClick={() => setIsModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-all uppercase italic"><Plus className="w-4 h-4"/> สั่งงาน</button>
             </div>
             <div className="relative">
@@ -481,7 +482,6 @@ export default function MainApp() {
               <input type="text" placeholder="ค้นหาภารกิจ / บิล..." className="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-xl text-sm font-bold text-slate-800 dark:text-white outline-none focus:ring-2 focus:ring-blue-500 transition-all" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
             </div>
             
-            {/* 🟢 คอนโทรลปุ่ม Filter และเมนู Dropdown */}
             <div>
               <div className="flex gap-2">
                 <button 
@@ -496,7 +496,6 @@ export default function MainApp() {
                 </select>
               </div>
 
-              {/* 🟢 แผงเมนู Filter ที่เลื่อนกางลงมา */}
               {showFilters && (
                 <div className="bg-slate-100 dark:bg-slate-950/50 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mt-3 space-y-3 animate-in fade-in slide-in-from-top-2">
                   <div>
@@ -555,6 +554,12 @@ export default function MainApp() {
                   <div className="absolute -top-3 right-4 flex gap-1">
                       {isTaskOverdue && !isSelected && <span className="bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-md animate-pulse">OVERDUE</span>}
                       {isBottleneck && !isSelected && <span className="bg-orange-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-md flex items-center gap-0.5"><Flame className="w-2.5 h-2.5"/> คอขวด</span>}
+                      {!isSelected && task.taskType && (
+                        <span className={`text-[8px] font-black px-2 py-0.5 rounded-full shadow-md flex items-center gap-0.5 ${task.taskType === 'Internal' ? 'bg-slate-700 text-white' : 'bg-cyan-500 text-white'}`}>
+                          {task.taskType === 'Internal' ? <Shield className="w-2.5 h-2.5"/> : <Globe className="w-2.5 h-2.5"/>}
+                          {task.taskType === 'Internal' ? 'ภายใน' : 'งานลูกค้า'}
+                        </span>
+                      )}
                   </div>
 
                   <div className="flex justify-between items-start mb-2 mt-2">
@@ -589,7 +594,15 @@ export default function MainApp() {
               <div className="flex justify-between items-start mb-4">
                 <div className="flex-1 pr-4">
                   <button onClick={() => setSelectedTaskId(null)} className="md:hidden text-blue-600 font-black text-[10px] flex items-center gap-1 mb-3 uppercase"><ArrowLeft className="w-3 h-3"/> Back</button>
-                  <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-3 italic uppercase">{selectedTask.topic}</h2>
+                  <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-2 italic uppercase flex items-center gap-3">
+                    {selectedTask.topic}
+                    {selectedTask.taskType && (
+                      <span className={`text-[10px] px-2 py-1 rounded-md flex items-center gap-1 ${selectedTask.taskType === 'Internal' ? 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300' : 'bg-cyan-100 dark:bg-cyan-900/50 text-cyan-700 dark:text-cyan-400'}`}>
+                         {selectedTask.taskType === 'Internal' ? <Shield className="w-3 h-3"/> : <Globe className="w-3 h-3"/>}
+                         {selectedTask.taskType === 'Internal' ? 'ภายในบริษัท' : 'งานลูกค้าภายนอก'}
+                      </span>
+                    )}
+                  </h2>
                   {selectedTask.documentNo && <div className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1 rounded-md text-xs font-black mb-3 border tracking-widest"><FileText className="w-3 h-3"/> REF: {selectedTask.documentNo}</div>}
                   
                   {selectedTask.details && <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mb-3 whitespace-pre-wrap shadow-inner">{selectedTask.details}</div>}
@@ -617,7 +630,9 @@ export default function MainApp() {
                 <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 transition-colors">
                   <div className="flex justify-between items-center mb-3 px-1">
                     <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Driver Sync</span>
-                    <button onClick={() => setIsAddPersonModalOpen(true)} className="p-1.5 bg-white dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg border border-slate-200 dark:border-blue-500/30 hover:bg-slate-100 dark:hover:bg-blue-800/50 transition-all shadow-sm"><UserPlus className="w-4 h-4"/></button>
+                    {(loggedInUser?.role === 'admin' || selectedTask.requester === loggedInUser?.name) && (
+                      <button onClick={() => setIsAddPersonModalOpen(true)} className="p-1.5 bg-white dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg border border-slate-200 dark:border-blue-500/30 hover:bg-slate-100 dark:hover:bg-blue-800/50 transition-all shadow-sm"><UserPlus className="w-4 h-4"/></button>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {(() => {
@@ -648,6 +663,12 @@ export default function MainApp() {
                               <span>{p}</span>
                               <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase ${badgeColor} text-white`}>{pStepData.icon} {pStepData.label}</div>
                               {isMe && pStepIdx < 3 && <button onClick={advanceMyStep} className="bg-blue-600 text-white px-2 py-1 rounded shadow-sm hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase text-[9px] italic ml-1">BOOST ⚡</button>}
+                              
+                              {(loggedInUser?.role === 'admin' || loggedInUser?.name === selectedTask.requester) && (
+                                <button onClick={() => removePersonFromTask(p)} className="ml-1 p-1 rounded-full hover:bg-red-100 text-slate-300 hover:text-red-500 transition-all" title="นำออกจากงาน">
+                                  <X className="w-3.5 h-3.5"/>
+                                </button>
+                              )}
                             </div>
                           );
                         });
@@ -679,7 +700,6 @@ export default function MainApp() {
 
                         <div className={`relative flex items-center gap-2 ${isMe ? 'flex-row-reverse' : ''} max-w-[85%]`}>
                           
-                          {/* เมนูโต้ตอบ (Hover Menu) */}
                           <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 bg-white dark:bg-slate-800 shadow-sm border rounded-lg p-1 absolute -top-4 -right-12 z-20">
                              <button onClick={()=>setReplyingTo(c)} className="p-1 text-slate-400 hover:text-blue-500 rounded"><Reply className="w-3.5 h-3.5"/></button>
                              {(isMe || isAdmin) && <button onClick={()=>handleDeleteChat(c.id)} className="p-1 text-slate-400 hover:text-red-500 rounded"><Trash2 className="w-3.5 h-3.5"/></button>}
@@ -687,7 +707,6 @@ export default function MainApp() {
 
                           <div className={`p-4 rounded-[1.2rem] text-sm shadow-sm relative ${isMe ? 'bg-blue-600 text-white rounded-tr-none' : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-tl-none text-slate-800 dark:text-slate-200'}`}>
                             
-                            {/* การแสดง Quote ข้อความที่ถูก Reply */}
                             {c.replyTo && (
                               <div className="mb-3 p-2 bg-black/10 dark:bg-black/30 rounded-lg border-l-4 border-l-amber-400 text-[10px] opacity-80 cursor-pointer line-clamp-2">
                                 <div className="font-black mb-1">{c.replyTo.sender}</div>
@@ -695,7 +714,6 @@ export default function MainApp() {
                               </div>
                             )}
 
-                            {/* ระบบ Image Preview & File Attachment */}
                             {c.fileUrl && (
                               isImage ? (
                                 <img src={c.fileUrl} alt="attachment" onClick={()=>setPreviewImage(c.fileUrl)} className="max-w-[200px] max-h-[200px] object-cover rounded-lg mb-2 cursor-pointer border border-black/10 hover:opacity-90 transition-opacity" />
@@ -704,12 +722,10 @@ export default function MainApp() {
                               )
                             )}
                             
-                            {/* เรนเดอร์ข้อความพร้อมไฮไลท์ @เมนชั่น */}
                             {c.text && <span className="whitespace-pre-wrap leading-relaxed font-medium">{renderMessageTextWithMentions(c.text)}</span>}
                           </div>
                         </div>
                         
-                        {/* Read Receipts (เครื่องหมายถูก) เฉพาะข้อความของตัวเอง */}
                         {isMe && !c.isSystem && (
                           <div className={`text-[10px] mt-1 pr-1 ${isRead ? 'text-blue-500' : 'text-slate-400'}`}>
                              {isRead ? <CheckCheck className="w-4 h-4 inline" /> : <CheckCircle2 className="w-3 h-3 inline" />}
@@ -725,7 +741,6 @@ export default function MainApp() {
             {/* 💬 แถบพิมพ์ข้อความ (Input Area) */}
             <div className="bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex flex-col z-10 transition-colors">
               
-              {/* แถบแจ้งเตือนเมื่อกำลัง Reply ข้อความ */}
               {replyingTo && (
                 <div className="px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-100 flex justify-between items-center text-xs">
                   <div className="flex flex-col">
@@ -769,7 +784,7 @@ export default function MainApp() {
         )}
       </div>
       
-      {/* โมดูลอื่นๆ ของระบบ */}
+      {/* โมดูลสั่งงานใหม่ (Modal) */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[300]">
           <form onSubmit={handleCreateTask} className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-md p-8 space-y-5 shadow-2xl border-b-8 border-blue-600 dark:border-b-0 dark:border dark:border-slate-700 animate-in zoom-in-95 duration-200 transition-colors">
@@ -777,6 +792,18 @@ export default function MainApp() {
               <h2 className="font-black text-2xl text-slate-800 dark:text-white tracking-tighter italic uppercase">NEW MISSION 🚀</h2>
               <button type="button" onClick={()=>setIsModalOpen(false)} className="bg-slate-100 dark:bg-slate-800 p-2 rounded-lg text-slate-400 hover:text-red-500 dark:hover:text-white transition-all"><X className="w-5 h-5"/></button>
             </div>
+            
+            {loggedInUser?.role !== 'customer' && (
+              <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl">
+                <button type="button" onClick={() => setNewTask({...newTask, taskType: 'Internal', relatedPersons: []})} className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${newTask.taskType === 'Internal' ? 'bg-white dark:bg-slate-800 shadow-md text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-900'}`}>
+                  <Shield className="w-4 h-4"/> ภายในบริษัท
+                </button>
+                <button type="button" onClick={() => setNewTask({...newTask, taskType: 'External', relatedPersons: []})} className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${newTask.taskType === 'External' ? 'bg-white dark:bg-slate-800 shadow-md text-cyan-600 dark:text-cyan-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-900'}`}>
+                  <Globe className="w-4 h-4"/> งานลูกค้า
+                </button>
+              </div>
+            )}
+
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 ml-1 uppercase tracking-widest">Topic</label>
               <input type="text" list="topic-list" className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl outline-none font-black text-blue-700 dark:text-white focus:border-blue-500 transition-all" value={newTask.topic} onChange={e=>setNewTask({...newTask, topic: e.target.value})} autoFocus/>
@@ -796,27 +823,43 @@ export default function MainApp() {
               <label className="text-[10px] font-black text-slate-500 ml-1 uppercase tracking-widest">Briefing</label>
               <textarea className="w-full p-4 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl outline-none font-bold text-slate-700 dark:text-slate-300 h-24 resize-none" value={newTask.details} onChange={e=>setNewTask({...newTask, details: e.target.value})}/>
             </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-blue-600 dark:text-blue-500 ml-1 uppercase tracking-widest">Select Drivers 👥</label>
-              <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border border-blue-100 dark:border-slate-800 p-3 rounded-xl bg-blue-50/50 dark:bg-slate-950">
-                {(settings?.users || []).map((u: string) => (
-                  <label key={u} className="flex items-center gap-2 text-xs font-bold p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg transition-all cursor-pointer text-slate-700 dark:text-slate-300">
-                    <input type="checkbox" className="rounded-sm w-4 h-4 border-slate-300 dark:bg-slate-900 dark:border-slate-700 text-blue-600 focus:ring-0" checked={newTask.relatedPersons.includes(u)} onChange={e => { if(e.target.checked) setNewTask({...newTask, relatedPersons:[...newTask.relatedPersons, u]}); else setNewTask({...newTask, relatedPersons: newTask.relatedPersons.filter(n=>n!==u)})}}/> {u}
-                  </label>
-                ))}
+            
+            {loggedInUser?.role === 'customer' ? (
+              <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl flex items-start gap-3">
+                <Shield className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5"/>
+                <div>
+                  <p className="text-sm font-black text-blue-800 dark:text-blue-300 mb-1">ส่งตรงถึงศูนย์บริการส่วนกลาง</p>
+                  <p className="text-xs font-bold text-blue-600/80 dark:text-blue-400/80">ออเดอร์นี้จะถูกส่งไปให้ทีมงานฝ่ายจัดการ (ออม, คนึงคนสวย, พริ้มพลอย) เพื่อตรวจสอบและดำเนินการทันที</p>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-blue-600 dark:text-blue-500 ml-1 uppercase tracking-widest flex justify-between">
+                  <span>Select Drivers 👥</span>
+                  <span className="text-slate-400">{newTask.taskType === 'Internal' ? '(เฉพาะพนักงาน)' : '(รวมลูกค้า)'}</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto border border-blue-100 dark:border-slate-800 p-3 rounded-xl bg-blue-50/50 dark:bg-slate-950">
+                  {getAvailableUsers(newTask.taskType).map((u: string) => (
+                    <label key={u} className="flex items-center gap-2 text-xs font-bold p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg transition-all cursor-pointer text-slate-700 dark:text-slate-300">
+                      <input type="checkbox" className="rounded-sm w-4 h-4 border-slate-300 dark:bg-slate-900 dark:border-slate-700 text-blue-600 focus:ring-0" checked={newTask.relatedPersons.includes(u)} onChange={e => { if(e.target.checked) setNewTask({...newTask, relatedPersons:[...newTask.relatedPersons, u]}); else setNewTask({...newTask, relatedPersons: newTask.relatedPersons.filter(n=>n!==u)})}}/> {u}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            
             <button type="submit" className="w-full bg-blue-600 text-white p-4 rounded-xl font-black text-lg shadow-xl hover:bg-blue-700 dark:hover:bg-blue-500 transition-all uppercase italic tracking-widest mt-2">Engage ⚡</button>
           </form>
         </div>
       )}
 
+      {/* โมดูลเพิ่มคนทีหลัง (Add Person Modal) */}
       {isAddPersonModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 dark:bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-[100]">
           <div className="bg-white dark:bg-slate-900 rounded-[2rem] w-full max-w-xs p-6 shadow-2xl border-t-8 border-blue-600 dark:border-t-0 dark:border dark:border-slate-700 transition-colors">
             <h3 className="font-black text-xl mb-4 flex items-center gap-2 italic uppercase text-slate-800 dark:text-white"><UserPlus className="w-6 h-6 text-blue-600 dark:text-blue-500"/> Add Driver</h3>
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-              {(settings?.users || []).filter((u: string) => !(selectedTask?.relatedPersons || []).includes(u)).map((u: string) => (
+              {getAvailableUsers(selectedTask?.taskType || 'Internal').filter((u: string) => !(selectedTask?.relatedPersons || []).includes(u)).map((u: string) => (
                 <button key={u} onClick={()=>{addPersonToTask(u); setIsAddPersonModalOpen(false);}} className="w-full text-left p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-blue-50 dark:hover:bg-slate-800 transition-all font-bold text-slate-700 dark:text-slate-300 flex justify-between items-center uppercase tracking-tight group">{u} <Plus className="w-4 h-4 opacity-0 group-hover:opacity-100 text-blue-500"/></button>
               ))}
             </div>
