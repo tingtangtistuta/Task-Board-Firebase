@@ -9,9 +9,10 @@ import {
   Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck, Flame, Shield, Globe
 } from 'lucide-react';
 import QRMaker from './QRMaker'; 
-import BillingMatcher from './BillingMatcher'; 
+import BillingMatcher from './BillingMatcher';
+import CustomerPortal from './CustomerPortal'; 
 
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbym2Jl1qlXHqaNJq7S0TbhhsXegSDAPwIzf7h8_q08rOkkyY60G4UWy_NeHVsFIenCO/exec';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxzakXzIAqfrSeStPJRRx0dl75R9gXif64LWdpYT1BcfQXujLXh3FDjWbCFxirPylot/exec';
 
 const checkOverdue = (dueDateStr: string) => {
   if (!dueDateStr) return false;
@@ -63,7 +64,9 @@ export default function MainApp() {
   });
   
   const [settings, setSettings] = useState<any>({ users: [], usersData: [], topicMapping: {} });
-  const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '', taskType: 'Internal' });
+  
+  // 🟢 เพิ่มตัวแปร customerName เข้าไปใน State ของการสร้างงาน
+  const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '', taskType: 'Internal', customerName: '' });
 
   const steps = [
     { label: 'รอรับงาน', icon: <Clock className="w-3.5 h-3.5" />, color: 'bg-slate-400 dark:bg-slate-600 dark:shadow-[0_0_5px_#475569]', text: 'text-slate-500 dark:text-slate-400' },
@@ -151,13 +154,17 @@ export default function MainApp() {
   const handleCreateTask = async (e: any) => {
     e.preventDefault();
     
-    // Auto-Routing: ถ้าเป็นลูกค้า ให้บังคับส่งหา 3 คนนี้ และล็อกเป็นงาน External
     let finalRelatedPersons = newTask.relatedPersons;
     let finalTaskType = newTask.taskType;
 
     if (loggedInUser?.role === 'customer') {
        finalRelatedPersons = ['ออม', 'คนึงคนสวย', 'พริ้มพลอย'];
        finalTaskType = 'External';
+    }
+
+    // 🟢 ตรวจสอบว่าถ้าเป็นงาน External แอดมินต้องระบุชื่อลูกค้า
+    if (finalTaskType === 'External' && !newTask.customerName && loggedInUser?.role !== 'customer') {
+        return showToast('⚠️ กรุณาระบุชื่อลูกค้าสำหรับออเดอร์นี้');
     }
 
     if (!newTask.topic || finalRelatedPersons.length === 0 || !newTask.dueDate) return showToast('กรุณากรอกข้อมูลให้ครบถ้วน');
@@ -169,16 +176,18 @@ export default function MainApp() {
       const docRef = await addDoc(collection(db, 'tasks'), { 
         ...newTask, 
         taskType: finalTaskType, 
+        customerName: finalTaskType === 'External' ? newTask.customerName : null, // 🟢 ส่งชื่อลูกค้าเข้า Firebase
         relatedPersons: finalRelatedPersons, 
         requester: loggedInUser.name, 
         individualStatus, 
         unreadBy: [...finalRelatedPersons].filter(p => p !== loggedInUser.name), 
         currentStep: 0, hasIssue: false, issueReporter: null, isArchived: false, createdAt: serverTimestamp(), lastActivity: serverTimestamp() 
       });
-      await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 ภารกิจใหม่: ${newTask.topic}\n🔖 ประเภท: ${finalTaskType === 'Internal' ? 'งานภายในบริษัท' : 'งานลูกค้า'}\n📝 ข้อมูล: ${newTask.details || '-'}`, timestamp: serverTimestamp(), isSystem: true });
+      await addDoc(collection(db, 'tasks', docRef.id, 'chats'), { sender: 'System', text: `🆕 ภารกิจใหม่: ${newTask.topic}\n🔖 ประเภท: ${finalTaskType === 'Internal' ? 'งานภายในบริษัท' : `งานลูกค้า (${newTask.customerName})`}\n📝 ข้อมูล: ${newTask.details || '-'}`, timestamp: serverTimestamp(), isSystem: true });
       showToast('✅ สตาร์ทภารกิจสำเร็จ!'); 
       setIsModalOpen(false); 
-      setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '', taskType: 'Internal' });
+      // 🟢 ล้างค่า customerName คืนสู่ความว่างเปล่า
+      setNewTask({ topic: '', documentNo: '', details: '', relatedPersons: [], dueDate: '', taskType: 'Internal', customerName: '' });
     } catch { showToast('❌ สร้างงานล้มเหลว'); }
     setIsLoading(false);
   };
@@ -368,6 +377,78 @@ export default function MainApp() {
     );
   };
 
+  // 🟢 ฟังก์ชันสำหรับดึงชื่อคนที่เป็นพนักงานมาแสดงให้เลือกทำงาน
+  const getAvailableUsers = (forTaskType: string) => {
+    if (settings?.usersData && settings.usersData.length > 0) {
+      return settings.usersData.filter((u: any) => {
+        if (u.role === 'customer') return false; // ซ่อนลูกค้าไม่ให้มาอยู่ในช่องเลือกคนทำงาน
+        return true;
+      }).map((u: any) => u.name);
+    }
+    return settings?.users || [];
+  };
+
+  // 🟢 ฟังก์ชันสำหรับดึงเฉพาะคนที่เป็น "ลูกค้า" มาแสดงใน Dropdown
+  const getCustomersList = () => {
+    if (settings?.usersData && settings.usersData.length > 0) {
+      return settings.usersData.filter((u: any) => u.role === 'customer').map((u: any) => u.name);
+    }
+    return [];
+  };
+// 🟢 ฟังก์ชันอัปโหลดเอกสาร (รองรับหลายไฟล์พร้อมกัน)
+const [isUploadingDoc, setIsUploadingDoc] = useState(false);
+
+const handleUploadOfficialDoc = async (e: any) => {
+  const files = e.target.files;
+  if (!files || files.length === 0 || !selectedTaskId) return;
+  setIsUploadingDoc(true);
+  
+  try {
+    const newDocs: any[] = [];
+    // วนลูปอัปโหลดทีละไฟล์
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const fileRef = ref(storage, `official_docs/${selectedTaskId}/${Date.now()}_${file.name}`);
+      await uploadBytes(fileRef, file);
+      const fileUrl = await getDownloadURL(fileRef);
+      newDocs.push({ url: fileUrl, name: file.name, uploadedAt: new Date().toISOString() });
+    }
+    
+    // อัปเดตเข้าไปในฐานข้อมูลแบบ Array (เพิ่มต่อท้ายของเดิม)
+    await updateDoc(doc(db, 'tasks', selectedTaskId), { 
+      officialDocs: arrayUnion(...newDocs), 
+      lastActivity: serverTimestamp() 
+    });
+    
+    await addDoc(collection(db, 'tasks', selectedTaskId, 'chats'), { 
+      sender: 'System', 
+      text: `📄 ${loggedInUser?.name} อัปโหลดเอกสารลูกค้าเพิ่ม ${files.length} ไฟล์`, 
+      timestamp: serverTimestamp(), isSystem: true 
+    });
+    
+    showToast('✅ อัปโหลดเอกสารสำเร็จ!');
+  } catch(err) {
+    showToast('❌ อัปโหลดเอกสารไม่สำเร็จ');
+  }
+  setIsUploadingDoc(false);
+};
+
+// 🔴 ฟังก์ชันสำหรับลบไฟล์ที่อัปโหลดผิด
+const handleDeleteOfficialDoc = async (docToRemove: any) => {
+  if (!selectedTaskId) return;
+  if (window.confirm(`ต้องการลบไฟล์ "${docToRemove.name}" ใช่หรือไม่?`)) {
+    try {
+      await updateDoc(doc(db, 'tasks', selectedTaskId), {
+        officialDocs: arrayRemove(docToRemove),
+        lastActivity: serverTimestamp()
+      });
+      showToast('🗑️ ลบไฟล์เรียบร้อย');
+    } catch (err) {
+      showToast('❌ ลบไฟล์ไม่สำเร็จ');
+    }
+  }
+};
+
   const processedTasks = tasks.filter(t => {
     if (t.isArchived) return false;
     if (t.taskType === 'Internal' && loggedInUser?.role === 'customer') return false;
@@ -393,6 +474,18 @@ export default function MainApp() {
     return true;
   }).sort((a, b) => sortBy === 'status' ? (a.currentStep || 0) - (b.currentStep || 0) : 0);
 
+    // 🟢 ถ้าเป็นลูกค้า ให้แสดงหน้า Customer Portal ทันที
+    if (loggedInUser?.role === 'customer') {
+      return (
+        <CustomerPortal 
+          loggedInUser={loggedInUser} 
+          onLogout={() => {
+            localStorage.removeItem('stp_user_session');
+            window.location.reload();
+          }} 
+        />
+      );
+    }
   if (!loggedInUser) return (
     <div className="min-h-screen bg-slate-200 dark:bg-slate-950 flex items-center justify-center p-4 font-sans transition-colors duration-300 dark:bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
       <div className="bg-white dark:bg-slate-900 rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border-b-8 border-blue-600 dark:border dark:border-blue-500/30 transition-all duration-300">
@@ -409,16 +502,6 @@ export default function MainApp() {
 
   const safeGlobalStepIdx = (selectedTask?.currentStep >= 0 && selectedTask?.currentStep <= 3) ? selectedTask.currentStep : 0;
   const globalStepData = steps[safeGlobalStepIdx] || steps[0];
-
-  const getAvailableUsers = (forTaskType: string) => {
-    if (settings?.usersData && settings.usersData.length > 0) {
-      return settings.usersData.filter((u: any) => {
-        if (forTaskType === 'Internal' && u.role === 'customer') return false;
-        return true;
-      }).map((u: any) => u.name);
-    }
-    return settings?.users || [];
-  };
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 flex flex-col font-sans h-screen overflow-hidden text-slate-800 dark:text-slate-200 transition-colors duration-300">
@@ -474,7 +557,6 @@ export default function MainApp() {
           <div className="p-4 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 space-y-4 shrink-0">
             <div className="flex justify-between items-center">
               <h2 className="font-black text-slate-800 dark:text-white text-lg tracking-tight italic uppercase">Missions ({processedTasks.length})</h2>
-              {/* เปิดให้ลูกค้าเห็นปุ่มสั่งงานได้ด้วยตามที่คุยกัน */}
               <button onClick={() => setIsModalOpen(true)} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black flex items-center gap-1.5 shadow-lg shadow-blue-500/30 hover:bg-blue-700 transition-all uppercase italic"><Plus className="w-4 h-4"/> สั่งงาน</button>
             </div>
             <div className="relative">
@@ -554,10 +636,12 @@ export default function MainApp() {
                   <div className="absolute -top-3 right-4 flex gap-1">
                       {isTaskOverdue && !isSelected && <span className="bg-rose-600 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-md animate-pulse">OVERDUE</span>}
                       {isBottleneck && !isSelected && <span className="bg-orange-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-md flex items-center gap-0.5"><Flame className="w-2.5 h-2.5"/> คอขวด</span>}
+                      
+                      {/* 🟢 แสดงชื่อลูกค้าบนป้ายกำกับของงาน External */}
                       {!isSelected && task.taskType && (
                         <span className={`text-[8px] font-black px-2 py-0.5 rounded-full shadow-md flex items-center gap-0.5 ${task.taskType === 'Internal' ? 'bg-slate-700 text-white' : 'bg-cyan-500 text-white'}`}>
                           {task.taskType === 'Internal' ? <Shield className="w-2.5 h-2.5"/> : <Globe className="w-2.5 h-2.5"/>}
-                          {task.taskType === 'Internal' ? 'ภายใน' : 'งานลูกค้า'}
+                          {task.taskType === 'Internal' ? 'ภายใน' : task.customerName}
                         </span>
                       )}
                   </div>
@@ -591,37 +675,96 @@ export default function MainApp() {
           <div className="flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 relative transition-colors duration-300">
             
             <div className="p-5 border-b border-slate-200 dark:border-slate-800 shadow-sm z-10 bg-white dark:bg-slate-900/90 backdrop-blur-md">
-              <div className="flex justify-between items-start mb-4">
-                <div className="flex-1 pr-4">
-                  <button onClick={() => setSelectedTaskId(null)} className="md:hidden text-blue-600 font-black text-[10px] flex items-center gap-1 mb-3 uppercase"><ArrowLeft className="w-3 h-3"/> Back</button>
-                  <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-2 italic uppercase flex items-center gap-3">
-                    {selectedTask.topic}
-                    {selectedTask.taskType && (
-                      <span className={`text-[10px] px-2 py-1 rounded-md flex items-center gap-1 ${selectedTask.taskType === 'Internal' ? 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300' : 'bg-cyan-100 dark:bg-cyan-900/50 text-cyan-700 dark:text-cyan-400'}`}>
-                         {selectedTask.taskType === 'Internal' ? <Shield className="w-3 h-3"/> : <Globe className="w-3 h-3"/>}
-                         {selectedTask.taskType === 'Internal' ? 'ภายในบริษัท' : 'งานลูกค้าภายนอก'}
-                      </span>
-                    )}
-                  </h2>
-                  {selectedTask.documentNo && <div className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 px-3 py-1 rounded-md text-xs font-black mb-3 border tracking-widest"><FileText className="w-3 h-3"/> REF: {selectedTask.documentNo}</div>}
-                  
-                  {selectedTask.details && <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 mb-3 whitespace-pre-wrap shadow-inner">{selectedTask.details}</div>}
-                  <div className="flex flex-wrap gap-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                    <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-blue-500"/> OP: <span className="text-slate-600 dark:text-slate-300">{selectedTask.requester}</span></span>
-                    <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-amber-500"/> TGT: <span className="text-amber-500 dark:text-amber-400">{selectedTask.dueDate}</span></span>
-                    <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5 text-emerald-500"/> เริ่ม: <span className="text-emerald-600 dark:text-emerald-400">{selectedTask.createdAt?.toDate ? selectedTask.createdAt.toDate().toLocaleString('th-TH', {dateStyle: 'short', timeStyle: 'short'}) : 'กำลังบันทึก...'}</span></span>
-                  </div>
+            <div className="flex justify-between items-start mb-4">
+            <div className="flex-1 pr-4">
+              <button onClick={() => setSelectedTaskId(null)} className="md:hidden text-blue-600 font-black text-[10px] flex items-center gap-1 mb-3 uppercase"><ArrowLeft className="w-3 h-3"/> Back</button>
+              <h2 className="text-2xl font-black text-slate-800 dark:text-white tracking-tighter leading-none mb-2">
+                {selectedTask.topic}
+              </h2>
+              
+              {selectedTask.taskType && (
+                <span className={`inline-flex text-[10px] px-2 py-1 rounded-md items-center gap-1 font-bold ${selectedTask.taskType === 'External' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                  {selectedTask.taskType === 'Internal' ? <Shield className="w-3 h-3"/> : <Globe className="w-3 h-3"/>}
+                  {selectedTask.taskType === 'Internal' ? 'ภายในบริษัท' : `ลูกค้าราย: ${selectedTask.customerName}`}
+                </span>
+              )}
+
+              {selectedTask.documentNo && (
+                <div className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 text-xs px-2 py-1 rounded-md mt-2 font-bold ml-2">
+                  <FileText className="w-3.5 h-3.5"/> Ref: {selectedTask.documentNo}
                 </div>
-                <div className="flex flex-col gap-2 shrink-0">
-                  {selectedTask.requester === loggedInUser?.name && <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black hover:bg-black transition-all flex items-center justify-center gap-1.5 uppercase italic"><Flag className="w-3.5 h-3.5"/> FINISH</button>}
-                  {selectedTask.hasIssue ? (
-                    <button onClick={resolveIssue} disabled={selectedTask.issueReporter === loggedInUser?.name && loggedInUser?.role !== 'admin'} className="px-4 py-2.5 rounded-xl text-xs font-black border border-emerald-500/50 text-emerald-600 bg-emerald-50 hover:bg-emerald-100 flex items-center justify-center gap-1.5 transition-all"><CheckCircle2 className="w-3.5 h-3.5"/> เคลียร์ปัญหา</button>
+              )}
+
+              {selectedTask.details && (
+                <div className="text-sm text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 my-3 whitespace-pre-wrap shadow-inner">
+                  {selectedTask.details}
+                </div>
+              )}
+
+              {/* 🟢 โซนอัปโหลดเอกสารลูกค้า (แบบหลายไฟล์) */}
+              {selectedTask?.taskType === 'External' && (
+                <div className="mt-3 mb-4 bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-200 dark:border-emerald-800">
+                  <div className="flex justify-between items-center mb-3">
+                    <div>
+                      <div className="text-xs font-black text-emerald-800 dark:text-emerald-400 flex items-center gap-1">
+                        <FileText className="w-4 h-4"/> เอกสารส่งมอบลูกค้า (Official Documents)
+                      </div>
+                      <div className="text-[10px] text-emerald-600/80 dark:text-emerald-500 mt-0.5 font-bold">
+                        สามารถแนบได้หลายไฟล์ และลบไฟล์ที่อัปโหลดผิดได้
+                      </div>
+                    </div>
+                    <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 shadow-sm transition-all uppercase">
+                      {isUploadingDoc ? <Loader2 className="w-3 h-3 animate-spin"/> : <Plus className="w-3 h-3"/>} เพิ่มไฟล์
+                      <input type="file" multiple className="hidden" accept=".pdf,image/*" onChange={handleUploadOfficialDoc} disabled={isUploadingDoc}/>
+                    </label>
+                  </div>
+
+                  {(selectedTask?.officialDocs || []).length > 0 ? (
+                    <div className="space-y-2">
+                      {(selectedTask?.officialDocs || []).map((docItem: any, idx: number) => (
+                        <div key={idx} className="flex justify-between items-center bg-white dark:bg-slate-800 p-2 rounded-lg border border-emerald-100 dark:border-emerald-700/50 shadow-sm">
+                          <a href={docItem.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-2 line-clamp-1">
+                            <FileText className="w-3.5 h-3.5 shrink-0"/> {docItem.name}
+                          </a>
+                          <button onClick={() => handleDeleteOfficialDoc(docItem)} className="text-red-400 hover:text-red-600 bg-red-50 hover:bg-red-100 p-1.5 rounded-md transition-all shrink-0" title="ลบไฟล์นี้">
+                            <Trash2 className="w-3 h-3"/>
+                          </button>
+                        </div>
+                      ))}
+                    </div>
                   ) : (
-                    <button onClick={reportIssue} disabled={(selectedTask.currentStep || 0) >= 3} className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 text-red-500 bg-red-50 hover:bg-red-100 flex items-center justify-center gap-1.5 transition-all"><AlertTriangle className="w-3.5 h-3.5"/> PIT STOP</button>
+                    <div className="text-[10px] text-center p-3 bg-white/50 dark:bg-slate-900/50 rounded-lg border border-dashed border-emerald-200 dark:border-emerald-800 text-emerald-600/50 font-bold">
+                      ยังไม่มีเอกสารแนบ
+                    </div>
                   )}
                 </div>
+              )}
+
+              {/* ข้อมูลเวลาและผู้สร้าง */}
+              <div className="flex flex-wrap gap-4 text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest mt-2">
+                <span className="flex items-center gap-1"><User className="w-3.5 h-3.5 text-blue-500"/> OP: {selectedTask.requester}</span>
+                <span className="flex items-center gap-1"><CalendarDays className="w-3.5 h-3.5 text-amber-500"/> Date: {selectedTask.dueDate || '-'}</span>
               </div>
-              
+            </div>
+
+            {/* ปุ่ม Action (ขวาบน) */}
+            <div className="flex flex-col gap-2 shrink-0">
+              {selectedTask.requester === loggedInUser?.name && (
+                <button onClick={archiveTask} className="bg-slate-900 dark:bg-lime-600 text-white dark:text-black px-4 py-2.5 rounded-xl text-xs font-black hover:bg-black transition-all flex items-center justify-center gap-1.5 uppercase italic">
+                  <CheckCheck className="w-4 h-4"/> Finish
+                </button>
+              )}
+              {selectedTask.hasIssue ? (
+                <button onClick={resolveIssue} disabled={selectedTask.issueReporter === loggedInUser?.name && loggedInUser?.role !== 'admin'} className="px-4 py-2.5 rounded-xl text-xs font-black border border-emerald-500 text-emerald-600 hover:bg-emerald-50 transition-all uppercase disabled:opacity-50 flex items-center justify-center gap-1.5">
+                  <Flag className="w-4 h-4"/> Resolve
+                </button>
+              ) : (
+                <button onClick={reportIssue} disabled={(selectedTask.currentStep || 0) >= 3} className="px-4 py-2.5 rounded-xl text-xs font-black border border-red-200 text-red-500 bg-red-50 hover:bg-red-100 disabled:opacity-50 transition-all uppercase flex items-center justify-center gap-1.5">
+                  <Flag className="w-4 h-4"/> Issue
+                </button>
+              )}
+            </div>
+          </div> 
               <div className="space-y-4 pt-2">
                 <div>
                    <div className="flex justify-between items-end mb-1"><span className="text-[10px] font-black text-slate-400 dark:text-slate-500 uppercase tracking-widest">Global Progress</span><span className={`text-xs font-black italic uppercase ${selectedTask.hasIssue ? 'text-red-500 dark:text-rose-500 animate-pulse' : globalStepData.text}`}>{selectedTask.hasIssue ? 'MALFUNCTION' : globalStepData.label}</span></div>
@@ -795,7 +938,7 @@ export default function MainApp() {
             
             {loggedInUser?.role !== 'customer' && (
               <div className="flex gap-2 p-1 bg-slate-100 dark:bg-slate-950 rounded-xl">
-                <button type="button" onClick={() => setNewTask({...newTask, taskType: 'Internal', relatedPersons: []})} className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${newTask.taskType === 'Internal' ? 'bg-white dark:bg-slate-800 shadow-md text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-900'}`}>
+                <button type="button" onClick={() => setNewTask({...newTask, taskType: 'Internal', relatedPersons: [], customerName: ''})} className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${newTask.taskType === 'Internal' ? 'bg-white dark:bg-slate-800 shadow-md text-blue-600 dark:text-blue-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-900'}`}>
                   <Shield className="w-4 h-4"/> ภายในบริษัท
                 </button>
                 <button type="button" onClick={() => setNewTask({...newTask, taskType: 'External', relatedPersons: []})} className={`flex-1 flex items-center justify-center gap-2 p-3 rounded-lg text-[10px] font-black tracking-widest uppercase transition-all ${newTask.taskType === 'External' ? 'bg-white dark:bg-slate-800 shadow-md text-cyan-600 dark:text-cyan-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-900'}`}>
@@ -803,6 +946,26 @@ export default function MainApp() {
                 </button>
               </div>
             )}
+            
+            {/* 🟢 ถ้าเลือกเป็นงานลูกค้า (External) จะมีช่อง Dropdown โผล่มาให้เลือกชื่อลูกค้า */}
+            {loggedInUser?.role !== 'customer' && newTask.taskType === 'External' && (
+              <div className="space-y-1 mt-4 animate-in fade-in slide-in-from-top-2">
+                <label className="text-[10px] font-black text-cyan-600 dark:text-cyan-400 ml-1 uppercase tracking-widest">Select Customer (ลูกค้ารายใด?)</label>
+                <input
+                 type="text"
+                 list="customer-list"
+                 placeholder="-- พิมพ์ชื่อเพื่อค้นหา หรือคลิกเพื่อเลือก --"
+                 className="w-full p-3.5 bg-cyan-50 dark:bg-slate-900 border border-cyan-200 dark:border-cyan-800 rounded-xl outline-none font-bold text-cyan-800 dark:text-cyan-300 focus:border-cyan-500 transition-all"
+                value={newTask.customerName || ''}
+                onChange={(e) => setNewTask({ ...newTask, customerName: e.target.value })}
+              />
+              <datalist id="customer-list">
+                {getCustomersList().map((c: string) => (
+                  <option key={c} value={c} />
+                ))}
+              </datalist>
+            </div>
+          )}
 
             <div className="space-y-1">
               <label className="text-[10px] font-black text-slate-500 ml-1 uppercase tracking-widest">Topic</label>
