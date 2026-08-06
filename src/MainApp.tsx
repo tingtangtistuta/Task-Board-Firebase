@@ -6,7 +6,7 @@ import {
   Search, CheckCircle2, Clock, 
   Paperclip, Send, AlertTriangle, ArrowLeft,
   MessageSquare, User, Plus, Loader2, LogOut, X, Package, CalendarDays, Trash2, Users, UserPlus, FileText, Filter,
-  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck, Flame, Shield, Globe
+  Settings, Flag, Zap, Sun, Moon, QrCode, FileSearch, Reply, CheckCheck, Flame, Shield, Globe, Eye
 } from 'lucide-react';
 import QRMaker from './QRMaker'; 
 import BillingMatcher from './BillingMatcher';
@@ -64,7 +64,9 @@ export default function MainApp() {
   });
   
   const [settings, setSettings] = useState<any>({ users: [], usersData: [], topicMapping: {} });
-  
+  const [previewCustomer, setPreviewCustomer] = useState<string | null>(null);
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [searchPreviewName, setSearchPreviewName] = useState(''); 
   // 🟢 เพิ่มตัวแปร customerName เข้าไปใน State ของการสร้างงาน
   const [newTask, setNewTask] = useState({ topic: '', documentNo: '', details: '', relatedPersons: [] as string[], dueDate: '', taskType: 'Internal', customerName: '' });
 
@@ -486,6 +488,34 @@ const handleDeleteOfficialDoc = async (docToRemove: any) => {
         />
       );
     }
+    // 👀 โหมดจำลองหน้าจอลูกค้า (สำหรับผู้บริหาร/บัญชี)
+  if (previewCustomer) {
+    return (
+      <div className="relative min-h-screen">
+        {/* แถบสีแดงเตือนสติว่ากำลังอยู่ในโหมดจำลอง */}
+        <div className="fixed top-0 left-0 right-0 bg-red-600 text-white text-center py-2 font-black text-xs z-[100] flex justify-center items-center gap-4 shadow-md">
+          <Eye className="w-4 h-4" />
+          กำลังจำลองหน้าจอของลูกค้า: {previewCustomer}
+          <button 
+            onClick={() => setPreviewCustomer(null)} 
+            className="bg-white text-red-600 px-3 py-1 rounded-lg hover:bg-red-50 transition-all shadow-sm"
+          >
+            ออกจากการจำลอง (กลับหน้าแอดมิน)
+          </button>
+        </div>
+        
+        {/* ดึงหน้า CustomerPortal มาแสดง โดยหลอกระบบว่าเป็นลูกค้ารายนั้น */}
+        <div className="pt-10">
+          <CustomerPortal 
+            loggedInUser={{ name: previewCustomer, role: 'customer' }} 
+            onLogout={() => setPreviewCustomer(null)} 
+            isAdminView={true}  
+          />
+        </div>
+      </div>
+    );
+  }
+  
   if (!loggedInUser) return (
     <div className="min-h-screen bg-slate-200 dark:bg-slate-950 flex items-center justify-center p-4 font-sans transition-colors duration-300 dark:bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]">
       <div className="bg-white dark:bg-slate-900 rounded-[2rem] p-8 w-full max-w-sm shadow-2xl border-b-8 border-blue-600 dark:border dark:border-blue-500/30 transition-all duration-300">
@@ -1066,6 +1096,75 @@ const handleDeleteOfficialDoc = async (docToRemove: any) => {
       <QRMaker isOpen={isQrModalOpen} onClose={() => setIsQrModalOpen(false)} loggedInUser={loggedInUser} showToast={showToast} />
       <BillingMatcher isOpen={isBillingMatcherOpen} onClose={() => setIsBillingMatcherOpen(false)} showToast={showToast} />
       {toastMsg && <div className="fixed bottom-10 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-8 py-4 rounded-xl font-black text-xs shadow-2xl z-[500] animate-in slide-in-from-bottom-10 flex items-center gap-3 tracking-widest italic uppercase"><Zap className="w-4 h-4 text-white"/> {toastMsg}</div>}
+      {/* 👁️ ปุ่มและหน้าต่างตรวจสอบลูกค้า (จำกัดสิทธิ์เฉพาะ บริหาร และ บัญชี) */}
+      {/* ⚠️ แก้ไขคำว่า 'admin', 'บัญชี', 'บริหาร' ให้ตรงกับ Role ในฐานข้อมูลของคุณอภิสิทธิ์ได้เลยครับ */}
+      {['admin', 'บริหาร', 'บัญชี'].includes(loggedInUser?.role || '') && (
+        <>
+          {/* ปุ่มลอยมุมซ้ายล่าง */}
+          <button 
+            onClick={() => setIsPreviewModalOpen(true)}
+            className="fixed bottom-6 left-6 z-40 bg-purple-600 hover:bg-purple-700 text-white p-3 rounded-full shadow-xl flex items-center justify-center gap-2 group transition-all border-2 border-white dark:border-slate-800"
+            title="ตรวจสอบหน้าจอลูกค้า"
+          >
+            <Eye className="w-5 h-5" />
+            <span className="max-w-0 overflow-hidden whitespace-nowrap group-hover:max-w-[150px] transition-all duration-300 ease-in-out font-black text-xs uppercase group-hover:ml-1 group-hover:mr-2">
+              Customer View
+            </span>
+          </button>
+
+          {/* Popup พิมพ์ค้นหาชื่อลูกค้า */}
+          {isPreviewModalOpen && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl w-full max-w-sm shadow-2xl border border-slate-200 dark:border-slate-800">
+                <h3 className="text-lg font-black text-slate-800 dark:text-white flex items-center gap-2 mb-4 uppercase italic">
+                  <Eye className="w-5 h-5 text-purple-600" /> Preview Portal
+                </h3>
+                
+                <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">
+                  พิมพ์ชื่อลูกค้าที่ต้องการตรวจสอบ:
+                </label>
+                
+                {/* ใช้ datalist ตัวเดียวกับหน้าสร้างงานได้เลย ทำให้ค้นหาง่าย */}
+                <input
+                  type="text"
+                  list="preview-customer-list"
+                  value={searchPreviewName}
+                  onChange={(e) => setSearchPreviewName(e.target.value)}
+                  placeholder="-- ชื่อลูกค้า --"
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl outline-none focus:ring-2 focus:ring-purple-500 font-bold mb-4 text-slate-800 dark:text-white"
+                />
+                <datalist id="preview-customer-list">
+                  {getCustomersList().map((c: string) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+                
+                <div className="flex gap-2">
+                  <button 
+                    onClick={() => setIsPreviewModalOpen(false)}
+                    className="flex-1 p-3 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-black hover:bg-slate-200 text-xs uppercase transition-all"
+                  >
+                    ยกเลิก
+                  </button>
+                  <button 
+                    onClick={() => {
+                      if (searchPreviewName) {
+                        setPreviewCustomer(searchPreviewName);
+                        setIsPreviewModalOpen(false);
+                        setSearchPreviewName('');
+                      }
+                    }}
+                    disabled={!searchPreviewName}
+                    className="flex-1 p-3 rounded-xl bg-purple-600 text-white font-black hover:bg-purple-700 disabled:opacity-50 text-xs uppercase transition-all shadow-md"
+                  >
+                    ตรวจสอบ
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
