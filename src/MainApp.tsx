@@ -701,40 +701,56 @@ const handleDeleteOfficialDoc = async (docToRemove: any) => {
                 </div>
               )}
 
-              {/* 🟢 โซนอัปโหลดเอกสารลูกค้า (แบบหลายไฟล์) */}
+              {/* 🟢 โซนอัปโหลดเอกสารลูกค้า (ฉบับย่อส่วน ไม่กินพื้นที่ช่องแชท) */}
               {selectedTask?.taskType === 'External' && (
-                <div className="mt-3 mb-4 bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-xl border border-emerald-200 dark:border-emerald-800">
-                  <div className="flex justify-between items-center mb-3">
-                    <div>
-                      <div className="text-xs font-black text-emerald-800 dark:text-emerald-400 flex items-center gap-1">
-                        <FileText className="w-4 h-4"/> เอกสารส่งมอบลูกค้า (Official Documents)
-                      </div>
-                      <div className="text-[10px] text-emerald-600/80 dark:text-emerald-500 mt-0.5 font-bold">
-                        สามารถแนบได้หลายไฟล์ และลบไฟล์ที่อัปโหลดผิดได้
-                      </div>
+                <div className="my-2 bg-emerald-50 dark:bg-emerald-950/30 p-3 rounded-xl border border-emerald-200 dark:border-emerald-800 transition-all">
+                  {/* หัวข้อและปุ่มอัปโหลด (จัดให้เพรียวบางลง) */}
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-black text-emerald-800 dark:text-emerald-400 flex items-center gap-1">
+                        <FileText className="w-3.5 h-3.5"/> เอกสารส่งมอบลูกค้า
+                      </span>
+                      <span className="text-[10px] font-bold text-emerald-600/80 dark:text-emerald-500 bg-emerald-100 dark:bg-emerald-900/50 px-2 py-0.5 rounded-full">
+                        {(selectedTask?.officialDocs || []).length} ไฟล์
+                      </span>
                     </div>
-                    <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 shadow-sm transition-all uppercase">
+                    <label className="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded-lg text-[10px] font-black cursor-pointer flex items-center gap-1 shadow-sm transition-all uppercase">
                       {isUploadingDoc ? <Loader2 className="w-3 h-3 animate-spin"/> : <Plus className="w-3 h-3"/>} เพิ่มไฟล์
                       <input type="file" multiple className="hidden" accept=".pdf,image/*" onChange={handleUploadOfficialDoc} disabled={isUploadingDoc}/>
                     </label>
                   </div>
 
+                  {/* 🟢 รายการไฟล์แบบแคปซูลแนวนอน + ล็อกความสูงไม่ให้ยืดเกิน 80px */}
                   {(selectedTask?.officialDocs || []).length > 0 ? (
-                    <div className="space-y-2">
+                    <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto pr-1 pt-0.5 custom-scrollbar">
                       {(selectedTask?.officialDocs || []).map((docItem: any, idx: number) => (
-                        <div key={idx} className="flex justify-between items-center bg-white dark:bg-slate-800 p-2 rounded-lg border border-emerald-100 dark:border-emerald-700/50 shadow-sm">
-                          <a href={docItem.url} target="_blank" rel="noreferrer" className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline flex items-center gap-2 line-clamp-1">
-                            <FileText className="w-3.5 h-3.5 shrink-0"/> {docItem.name}
+                        <div 
+                          key={idx} 
+                          className="inline-flex items-center justify-between gap-2 bg-white dark:bg-slate-800 px-2.5 py-1 rounded-lg border border-emerald-200/80 dark:border-emerald-700/50 shadow-2xs hover:border-emerald-400 transition-all group max-w-[200px]"
+                        >
+                          <a 
+                            href={docItem.url} 
+                            target="_blank" 
+                            rel="noreferrer" 
+                            className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 hover:underline flex items-center gap-1 truncate"
+                            title={docItem.name}
+                          >
+                            <FileText className="w-3 h-3 shrink-0 text-emerald-500"/> 
+                            <span className="truncate">{docItem.name}</span>
                           </a>
-                          <button onClick={() => handleDeleteOfficialDoc(docItem)} className="text-red-400 hover:text-red-600 bg-red-50 hover:bg-red-100 p-1.5 rounded-md transition-all shrink-0" title="ลบไฟล์นี้">
+                          <button 
+                            onClick={() => handleDeleteOfficialDoc(docItem)} 
+                            className="text-slate-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 p-0.5 rounded transition-all shrink-0" 
+                            title="ลบไฟล์นี้"
+                          >
                             <Trash2 className="w-3 h-3"/>
                           </button>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <div className="text-[10px] text-center p-3 bg-white/50 dark:bg-slate-900/50 rounded-lg border border-dashed border-emerald-200 dark:border-emerald-800 text-emerald-600/50 font-bold">
-                      ยังไม่มีเอกสารแนบ
+                    <div className="text-[10px] text-center py-1.5 bg-white/50 dark:bg-slate-900/50 rounded-lg border border-dashed border-emerald-200 dark:border-emerald-800 text-emerald-600/50 font-bold">
+                      ยังไม่มีเอกสารแนบ (คลิก "เพิ่มไฟล์" ด้านขวาบน)
                     </div>
                   )}
                 </div>
