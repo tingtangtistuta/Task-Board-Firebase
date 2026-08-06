@@ -820,7 +820,7 @@ const handleDeleteOfficialDoc = async (docToRemove: any) => {
                 </div>
               </div>
             </div>
-
+       
             {/* 💬 โซนข้อความแชท */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-transparent z-10 transition-colors">
               {(chats[selectedTaskId!] || []).map((c: any) => {
@@ -881,6 +881,7 @@ const handleDeleteOfficialDoc = async (docToRemove: any) => {
               })}
             </div>
 
+        
             {/* 💬 แถบพิมพ์ข้อความ (Input Area) */}
             <div className="bg-white dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex flex-col z-10 transition-colors">
               
