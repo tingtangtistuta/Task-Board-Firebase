@@ -522,8 +522,31 @@ const handleDeleteOfficialDoc = async (docToRemove: any) => {
         <h1 className="text-3xl font-black text-blue-900 dark:text-white mb-1 text-center tracking-tighter italic uppercase">STP <span className="dark:text-blue-500">Ltd.</span></h1>
         <p className="text-center text-slate-400 text-[10px] font-black mb-8 uppercase tracking-widest italic">Sangthai Panich Workflow</p>
         <form onSubmit={handleLogin} className="space-y-5">
-          <input type="text" placeholder="Username" className="w-full p-4 bg-slate-100 dark:bg-slate-950 border-transparent rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={loginForm.username} onChange={e => setLoginForm({...loginForm, username: e.target.value})} />
-          <input type="password" placeholder="Password" className="w-full p-4 bg-slate-100 dark:bg-slate-950 border-transparent rounded-2xl outline-none focus:ring-2 focus:ring-blue-500 font-bold" value={loginForm.password} onChange={e => setLoginForm({...loginForm, password: e.target.value})} />
+        <div>
+            <label className="block text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+              ชื่อผู้ใช้งาน (Username)
+            </label>
+            <input 
+              type="text" 
+              placeholder="พิมพ์ชื่อผู้ใช้งาน..." 
+              value={loginForm.username}
+              onChange={(e) => setLoginForm({...loginForm, username: e.target.value})}
+              className="w-full p-4 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 text-base font-bold shadow-inner transition-all"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
+              รหัสผ่าน (Password)
+            </label>
+            <input 
+              type="password" 
+              placeholder="พิมพ์รหัสผ่าน..." 
+              value={loginForm.password}
+              onChange={(e) => setLoginForm({...loginForm, password: e.target.value})}
+              className="w-full p-4 bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded-2xl outline-none focus:ring-2 focus:ring-cyan-500 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 text-base font-bold shadow-inner transition-all"
+            />
+          </div>
           <button type="submit" disabled={isLoading} className="w-full bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-2xl font-black text-lg shadow-xl uppercase italic">START MISSION 🏎️</button>
         </form>
       </div>
